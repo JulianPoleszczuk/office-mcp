@@ -12,10 +12,11 @@ Kazda akcja wykonuje sie w watku COM swojej aplikacji (patrz
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import logging
 import os
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Iterator, TypeVar
 
 from bridge.connection_manager import AppConnection
 from bridge.utils.com_helpers import com_error, normalize_path, to_python
@@ -79,6 +80,7 @@ class BaseController:
 
     APP_KEY: str = ""
     DISPLAY_NAME: str = ""
+    ALERTS_OFF: Any = False
 
     def __init__(self, connection: AppConnection) -> None:
         self.connection = connection
@@ -214,6 +216,26 @@ class BaseController:
             {"hresult": hex(hresult & 0xFFFFFFFF) if isinstance(hresult, int) else None},
         )
 
+    @contextlib.contextmanager
+    def alerts_suppressed(self) -> Iterator[None]:
+        """Wylacza okna dialogowe Office (np. pytanie o nadpisanie pliku)."""
+        app = self.app
+        previous: Any = None
+        try:
+            previous = app.DisplayAlerts
+            app.DisplayAlerts = self.ALERTS_OFF
+        except Exception:  # noqa: BLE001 - PowerPoint bywa kapryzny przy starcie
+            previous = None
+
+        try:
+            yield
+        finally:
+            if previous is not None:
+                try:
+                    app.DisplayAlerts = previous
+                except Exception:  # noqa: BLE001
+                    pass
+
     def resolve_existing_path(self, path: str) -> str:
         """Sciezka istniejacego pliku albo :class:`DocumentNotFoundError`."""
         try:
@@ -259,6 +281,13 @@ class BaseController:
     def status(self) -> dict[str, Any]:
         """Zwraca stan polaczenia bez wymuszania startu aplikacji."""
         return self.connection.status()
+
+
+def is_connection_error(exc: BaseException) -> bool:
+    """Czy blad COM dotyczy polaczenia (a nie argumentow wywolania)."""
+    args = getattr(exc, "args", ())
+    hresult = args[0] if args else None
+    return hresult in _DISCONNECTED or hresult in _BUSY
 
 
 def to_python_result(value: Any) -> Any:

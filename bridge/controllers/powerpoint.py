@@ -68,6 +68,7 @@ class PowerPointController(BaseController):
 
     APP_KEY = "powerpoint"
     DISPLAY_NAME = "PowerPoint"
+    ALERTS_OFF = 1
 
     def presentation(self) -> Any:
         """Aktywna prezentacja albo czytelny blad, gdy nic nie jest otwarte."""
@@ -206,9 +207,10 @@ class PowerPointController(BaseController):
         if template:
             presentation.ApplyTemplate(self.resolve_existing_path(template))
 
-        presentation.SaveAs(
-            target, save_format_for(target, PP_SAVE_FORMATS, PP_SAVE_FORMATS[".pptx"])
-        )
+        with self.alerts_suppressed():
+            presentation.SaveAs(
+                target, save_format_for(target, PP_SAVE_FORMATS, PP_SAVE_FORMATS[".pptx"])
+            )
         return self._presentation_summary(presentation)
 
     @action("open_presentation")
@@ -236,9 +238,11 @@ class PowerPointController(BaseController):
 
         if path:
             target = self.resolve_target_path(path)
-            presentation.SaveAs(
-                target, save_format_for(target, PP_SAVE_FORMATS, PP_SAVE_FORMATS[".pptx"])
-            )
+            with self.alerts_suppressed():
+                presentation.SaveAs(
+                    target,
+                    save_format_for(target, PP_SAVE_FORMATS, PP_SAVE_FORMATS[".pptx"]),
+                )
         elif not presentation.Path:
             raise InvalidReferenceError(
                 "Prezentacja nie ma jeszcze pliku - podaj parametr path"
