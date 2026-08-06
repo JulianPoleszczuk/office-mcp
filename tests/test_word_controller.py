@@ -186,44 +186,45 @@ class TestInspection:
 class TestContent:
     def test_add_paragraph_reuses_trailing_empty_paragraph(self, word):
         controller, _app, document = word
-        empty = make_paragraph("\r")
-        document.Paragraphs = com_collection([empty])
+        document.Paragraphs = com_collection([make_paragraph("\r")])
 
         controller.dispatch("add_paragraph", {"text": "Wstep"})
 
-        document.Paragraphs.Add.assert_not_called()
-        assert empty.Range.Text == "Wstep"
+        document.Content.InsertParagraphAfter.assert_not_called()
+        document.Content.InsertAfter.assert_called_once_with("Wstep")
 
-    def test_add_paragraph_appends_new_one(self, word):
+    def test_add_paragraph_starts_new_one_after_filled_paragraph(self, word):
         controller, _app, document = word
-        created = make_paragraph()
-        document.Paragraphs.Add.return_value = created
 
         controller.dispatch("add_paragraph", {"text": "Kolejny akapit"})
 
-        document.Paragraphs.Add.assert_called_once()
-        assert created.Range.Text == "Kolejny akapit"
+        document.Content.Collapse.assert_called_once_with(0)
+        document.Content.InsertParagraphAfter.assert_called_once()
+        document.Content.InsertAfter.assert_called_once_with("Kolejny akapit")
+
+    def test_add_paragraph_keeps_paragraph_mark(self, word):
+        controller, _app, document = word
+
+        controller.dispatch("add_paragraph", {"text": "Tresc"})
+
+        assert document.Paragraphs(1).Range.Text == "Tekst"
 
     def test_add_paragraph_applies_style(self, word):
         controller, _app, document = word
-        created = make_paragraph()
-        document.Paragraphs.Add.return_value = created
 
         result = controller.dispatch(
             "add_paragraph", {"text": "Cytat", "style": "Quote"}
         )
 
-        assert created.Range.Style == "Quote"
+        assert document.Paragraphs(1).Range.Style == "Quote"
         assert result["style"] == "Quote"
 
     def test_add_heading_uses_heading_style(self, word):
         controller, _app, document = word
-        created = make_paragraph()
-        document.Paragraphs.Add.return_value = created
 
         result = controller.dispatch("add_heading", {"text": "Wstep", "level": 2})
 
-        assert created.Range.Style == "Heading 2"
+        assert document.Paragraphs(1).Range.Style == "Heading 2"
         assert result["level"] == 2
 
     @pytest.mark.parametrize("level", [0, 10, "drugi"])
@@ -247,8 +248,11 @@ class TestContent:
         )
 
         assert result["replacements"] == 2
-        assert document.Content.Find.Replacement.Text == "Zrobione"
-        document.Content.Find.Execute.assert_called_once_with(Replace=2)
+        kwargs = document.Content.Find.Execute.call_args.kwargs
+        assert kwargs["FindText"] == "TODO"
+        assert kwargs["ReplaceWith"] == "Zrobione"
+        assert kwargs["Replace"] == 2
+        assert kwargs["MatchCase"] is False
 
     def test_find_replace_respects_match_case(self, word):
         controller, _app, document = word
@@ -280,22 +284,23 @@ class TestContent:
 
     def test_add_bullet_list_applies_bullets(self, word):
         controller, _app, document = word
-        created = [make_paragraph(start=0, end=5), make_paragraph(start=5, end=12)]
-        document.Paragraphs.Add.side_effect = created
+        first = make_paragraph("Pierwszy\r", start=0, end=9)
+        second = make_paragraph("Zagniezdzony\r", start=9, end=22)
+        document.Paragraphs = com_collection([first, second])
 
         result = controller.dispatch(
             "add_bullet_list",
             {"items": ["Pierwszy", {"text": "Zagniezdzony", "level": 2}]},
         )
 
-        document.Range.assert_called_once_with(0, 12)
+        assert document.Content.InsertAfter.call_count == 2
+        document.Range.assert_called_once_with(9, 22)
         document.Range.return_value.ListFormat.ApplyBulletDefault.assert_called_once()
-        assert created[1].Range.ListFormat.ListLevelNumber == 2
+        assert second.Range.ListFormat.ListLevelNumber == 2
         assert result["items"] == 2
 
     def test_add_numbered_list_applies_numbering(self, word):
         controller, _app, document = word
-        document.Paragraphs.Add.side_effect = [make_paragraph(), make_paragraph()]
 
         controller.dispatch("add_numbered_list", {"items": ["Raz", "Dwa"]})
 
@@ -502,7 +507,9 @@ class TestObjects:
 class TestErrorMapping:
     def test_disconnected_word(self, word):
         controller, _app, document = word
-        document.Paragraphs.Add.side_effect = make_com_error(-2147417848, "Word zamkniety")
+        document.Content.InsertAfter.side_effect = make_com_error(
+            -2147417848, "Word zamkniety"
+        )
 
         with pytest.raises(ComConnectionError):
             controller.dispatch("add_paragraph", {"text": "x"})

@@ -8,6 +8,7 @@ from bridge.controllers.excel import (
     _column_number,
     _row_span,
 )
+from bridge.utils.com_helpers import com_address
 from bridge.utils.errors import (
     ComConnectionError,
     DocumentNotFoundError,
@@ -28,7 +29,8 @@ def make_worksheet(name="Arkusz1", values=((1, 2), (3, 4))):
             target = MagicMock()
             target.Address.return_value = f"${reference}"
             target.Value = values
-            target.Resize.return_value.Address.return_value = f"${reference}:resized"
+            target.Row = 1
+            target.Column = 1
             ranges[reference] = target
         return ranges[reference]
 
@@ -246,7 +248,7 @@ class TestWritingData:
         )
         assert worksheet.Range("B2").Value == 1500
 
-    def test_set_range_resizes_target(self, excel):
+    def test_set_range_writes_whole_block(self, excel):
         controller, _app, _workbook, worksheet = excel
 
         result = controller.dispatch(
@@ -258,10 +260,20 @@ class TestWritingData:
             },
         )
 
-        anchor = worksheet.Range("A1")
-        anchor.Resize.assert_called_once_with(2, 2)
-        assert anchor.Resize.return_value.Value == (("Nazwa", "Kwota"), ("Serwer", 1200))
+        assert worksheet.Range("A1:B2").Value == (("Nazwa", "Kwota"), ("Serwer", 1200))
         assert result["rows"] == 2
+
+    def test_set_range_block_starts_at_anchor(self, excel):
+        controller, _app, _workbook, worksheet = excel
+        anchor = worksheet.Range("C3")
+        anchor.Row, anchor.Column = 3, 3
+
+        controller.dispatch(
+            "set_range",
+            {"sheet": "Budzet", "start_cell": "C3", "values_2d": [[1, 2, 3]]},
+        )
+
+        assert worksheet.Range("C3:E3").Value == ((1, 2, 3),)
 
     def test_set_range_pads_ragged_rows(self, excel):
         controller, _app, _workbook, worksheet = excel
@@ -271,10 +283,7 @@ class TestWritingData:
             {"sheet": "Budzet", "start_cell": "A1", "values_2d": [["a", "b"], ["c"]]},
         )
 
-        assert worksheet.Range("A1").Resize.return_value.Value == (
-            ("a", "b"),
-            ("c", None),
-        )
+        assert worksheet.Range("A1:B2").Value == (("a", "b"), ("c", None))
 
     def test_set_range_rejects_empty_data(self, excel):
         controller, *_ = excel
@@ -634,3 +643,18 @@ class TestHelpers:
     def test_as_formula(self):
         assert _as_formula(1000) == "=1000"
         assert _as_formula("=A1") == "=A1"
+
+    def test_com_address_handles_method_style_dispatch(self):
+        target = MagicMock()
+        target.Address.return_value = "$A$1:$C$5"
+        assert com_address(target) == "$A$1:$C$5"
+
+    def test_com_address_handles_property_style_dispatch(self):
+        target = MagicMock()
+        target.Address = "$A$1:$B$2"
+        assert com_address(target) == "$A$1:$B$2"
+
+    def test_com_address_falls_back_when_arguments_rejected(self):
+        target = MagicMock()
+        target.Address.side_effect = [TypeError(), "$D$4"]
+        assert com_address(target) == "$D$4"

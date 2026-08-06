@@ -16,6 +16,7 @@ from bridge.utils.com_helpers import (
     XL_SAVE_FORMATS,
     column_index,
     column_letter,
+    com_address,
     com_error,
     from_com_matrix,
     lookup_constant,
@@ -113,6 +114,23 @@ class ExcelController(BaseController):
             raise InvalidReferenceError(
                 f"Nieprawidlowy zakres '{reference}' w arkuszu {worksheet.Name}"
             ) from exc
+
+    def _block_address(self, anchor: Any, rows: int, columns: int) -> str:
+        """Adres A1 bloku o zadanym rozmiarze, liczony od komorki zakotwiczenia.
+
+        Swiadomie nie uzywamy ``Range.Resize`` - przy pozno wiazanym COM
+        ``Resize(5, 3)`` bywa interpretowane jako domyslna wlasciwosc ``Item``
+        i zwraca pojedyncza komorke zamiast bloku.
+        """
+        first_row = int(anchor.Row)
+        first_column = int(anchor.Column)
+        last_row = first_row + max(1, int(rows)) - 1
+        last_column = first_column + max(1, int(columns)) - 1
+
+        return (
+            f"{column_letter(first_column)}{first_row}:"
+            f"{column_letter(last_column)}{last_row}"
+        )
 
     def _workbook_summary(self, workbook: Any) -> dict[str, Any]:
         return {
@@ -256,7 +274,7 @@ class ExcelController(BaseController):
             worksheet = workbook.Worksheets(index)
             entry = {"index": index, "name": to_python(worksheet.Name)}
             try:
-                entry["used_range"] = to_python(worksheet.UsedRange.Address(True, True))
+                entry["used_range"] = to_python(com_address(worksheet.UsedRange))
                 entry["rows"] = int(worksheet.UsedRange.Rows.Count)
                 entry["columns"] = int(worksheet.UsedRange.Columns.Count)
             except com_error:
@@ -280,7 +298,7 @@ class ExcelController(BaseController):
 
         return {
             "sheet": to_python(worksheet.Name),
-            "range": to_python(target.Address(True, True)),
+            "range": to_python(com_address(target)),
             "rows": len(values),
             "columns": len(values[0]) if values else 0,
             "values": values,
@@ -295,7 +313,7 @@ class ExcelController(BaseController):
 
         return {
             "sheet": to_python(worksheet.Name),
-            "range": to_python(used.Address(True, True)),
+            "range": to_python(com_address(used)),
             "first_row": int(used.Row),
             "first_column": int(used.Column),
             "rows": int(used.Rows.Count),
@@ -313,7 +331,7 @@ class ExcelController(BaseController):
 
         return {
             "sheet": to_python(worksheet.Name),
-            "cell": to_python(target.Address(True, True)),
+            "cell": to_python(com_address(target)),
             "value": to_python(target.Value),
         }
 
@@ -326,13 +344,15 @@ class ExcelController(BaseController):
 
         worksheet = self.worksheet(sheet)
         anchor = self.range_of(worksheet, start_cell)
-        target = anchor.Resize(len(matrix), len(matrix[0]))
+        target = self.range_of(
+            worksheet, self._block_address(anchor, len(matrix), len(matrix[0]))
+        )
         target.Value = to_com_matrix(matrix)
         self._activate(worksheet)
 
         return {
             "sheet": to_python(worksheet.Name),
-            "range": to_python(target.Address(True, True)),
+            "range": to_python(com_address(target)),
             "rows": len(matrix),
             "columns": len(matrix[0]),
         }
@@ -351,7 +371,7 @@ class ExcelController(BaseController):
 
         return {
             "sheet": to_python(worksheet.Name),
-            "cell": to_python(target.Address(True, True)),
+            "cell": to_python(com_address(target)),
             "formula": text,
             "value": to_python(target.Value),
         }
@@ -371,7 +391,7 @@ class ExcelController(BaseController):
 
         return {
             "sheet": to_python(worksheet.Name),
-            "range": to_python(target.Address(True, True)),
+            "range": to_python(com_address(target)),
             "contents_only": bool(contents_only),
         }
 
@@ -457,7 +477,7 @@ class ExcelController(BaseController):
         self._activate(worksheet)
         return {
             "sheet": to_python(worksheet.Name),
-            "range": to_python(target.Address(True, True)),
+            "range": to_python(com_address(target)),
             "applied": applied,
         }
 
@@ -491,7 +511,7 @@ class ExcelController(BaseController):
         self._activate(worksheet)
         return {
             "sheet": to_python(worksheet.Name),
-            "range": to_python(target.Address(True, True)),
+            "range": to_python(com_address(target)),
             "centered": bool(center),
         }
 
@@ -527,14 +547,14 @@ class ExcelController(BaseController):
             for position, color in enumerate(colors, start=1):
                 scale.ColorScaleCriteria(position).FormatColor.Color = parse_color(color)
             self._activate(worksheet)
-            return {"rule": kind, "range": to_python(target.Address(True, True))}
+            return {"rule": kind, "range": to_python(com_address(target))}
 
         if kind == "data_bar":
             bar = target.FormatConditions.AddDatabar()
             if settings.get("color") is not None:
                 bar.BarColor.Color = parse_color(settings["color"])
             self._activate(worksheet)
-            return {"rule": kind, "range": to_python(target.Address(True, True))}
+            return {"rule": kind, "range": to_python(com_address(target))}
 
         if kind == "cell_value":
             operator = lookup_constant(
@@ -582,7 +602,7 @@ class ExcelController(BaseController):
         return {
             "rule": kind,
             "sheet": to_python(worksheet.Name),
-            "range": to_python(target.Address(True, True)),
+            "range": to_python(com_address(target)),
         }
 
     @action("freeze_panes")
@@ -599,7 +619,7 @@ class ExcelController(BaseController):
 
         return {
             "sheet": to_python(worksheet.Name),
-            "cell": to_python(target.Address(True, True)),
+            "cell": to_python(com_address(target)),
         }
 
     @action("add_chart")
@@ -635,7 +655,7 @@ class ExcelController(BaseController):
             "sheet": to_python(worksheet.Name),
             "chart_name": to_python(chart_object.Name),
             "chart_type": chart_type,
-            "data_range": to_python(source.Address(True, True)),
+            "data_range": to_python(com_address(source)),
         }
 
     @action("create_table")
@@ -666,7 +686,7 @@ class ExcelController(BaseController):
         return {
             "sheet": to_python(worksheet.Name),
             "table_name": str(table_name),
-            "range": to_python(target.Address(True, True)),
+            "range": to_python(com_address(target)),
             "has_headers": bool(has_headers),
         }
 
@@ -686,6 +706,9 @@ class ExcelController(BaseController):
 
         ``values`` przyjmuje nazwy pol (``["Kwota"]``) albo slowniki
         ``{"field": "Kwota", "function": "average"}``.
+
+        Komorke docelowa przekazujemy do COM jako obiekt ``Range`` - Excel
+        odrzuca (E_INVALIDARG) adres tekstowy w notacji A1.
         """
         workbook = self.workbook()
         source_worksheet = self.worksheet(sheet)
@@ -695,16 +718,14 @@ class ExcelController(BaseController):
         )
         destination = self.range_of(target_worksheet, dest_cell)
 
-        source_address = f"'{source_worksheet.Name}'!{source.Address(True, True)}"
-        destination_address = (
-            f"'{target_worksheet.Name}'!{destination.Address(True, True)}"
-        )
+        source_address = f"'{source_worksheet.Name}'!{com_address(source)}"
+        destination_address = f"'{target_worksheet.Name}'!{com_address(destination)}"
 
         cache = workbook.PivotCaches().Create(
             SourceType=XL_DATABASE, SourceData=source_address
         )
         pivot = cache.CreatePivotTable(
-            TableDestination=destination_address, TableName=str(table_name)
+            TableDestination=destination, TableName=str(table_name)
         )
 
         for position, field in enumerate(rows or [], start=1):
@@ -798,3 +819,4 @@ def _pivot_field(pivot: Any, field_name: Any) -> Any:
 
 
 __all__ = ["ExcelController"]
+

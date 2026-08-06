@@ -80,14 +80,28 @@ class WordController(BaseController):
         target.Collapse(WD_COLLAPSE_END)
         return target
 
-    def _new_paragraph(self, document: Any) -> Any:
-        """Nowy akapit na koncu - z reuzyciem pustego akapitu, jesli taki jest."""
-        count = document.Paragraphs.Count
-        if count:
-            last = document.Paragraphs(count)
-            if not str(last.Range.Text).strip():
-                return last
-        return document.Paragraphs.Add()
+    def _append_paragraph(self, document: Any, text: str) -> Any:
+        """Dopisuje akapit z tekstem na koncu dokumentu i zwraca go.
+
+        Swiadomie nie uzywamy ``Paragraphs.Add`` ani przypisania do
+        ``Range.Text``: pierwsze wstawia akapit w miejscu zaznaczenia, a drugie
+        nadpisuje znak konca akapitu i skleja sasiednie akapity w jeden.
+        Pusty akapit na koncu dokumentu jest wykorzystywany ponownie.
+        """
+        content = document.Content
+        content.Collapse(WD_COLLAPSE_END)
+
+        if self._has_text(document.Paragraphs(document.Paragraphs.Count)):
+            content.InsertParagraphAfter()
+
+        content.InsertAfter(str(text))
+        return document.Paragraphs(document.Paragraphs.Count)
+
+    @staticmethod
+    def _has_text(paragraph: Any) -> bool:
+        """Czy akapit zawiera cokolwiek poza znakami konca akapitu i komorki."""
+        raw = str(paragraph.Range.Text)
+        return bool(raw.replace("\r", "").replace("\x07", "").strip())
 
     def _apply_named_style(self, target: Any, style_name: str) -> str:
         """Ustawia styl po nazwie lokalnej albo po stalej wbudowanej Worda."""
@@ -263,8 +277,7 @@ class WordController(BaseController):
     def add_paragraph(self, text: str, style: str | None = None) -> dict[str, Any]:
         """Dopisuje akapit na koncu dokumentu, opcjonalnie z wybranym stylem."""
         document = self.document()
-        paragraph = self._new_paragraph(document)
-        paragraph.Range.Text = str(text)
+        paragraph = self._append_paragraph(document, text)
 
         applied_style = None
         if style:
@@ -302,7 +315,15 @@ class WordController(BaseController):
     def find_replace(
         self, old_text: str, new_text: str, match_case: bool = False
     ) -> dict[str, Any]:
-        """Podmienia tekst w calym dokumencie i zwraca liczbe trafien."""
+        """Podmienia tekst w calym dokumencie i zwraca liczbe trafien.
+
+        Wszystkie parametry wyszukiwania ida w jednym wywolaniu ``Execute`` -
+        ustawianie ich jako wlasciwosci obiektu ``Find`` przy poznym wiazaniu
+        COM zwraca sukces, ale nie podmienia tekstu.
+
+        Przy ``match_case=False`` Word dopasowuje wielkosc liter wstawianego
+        tekstu do znalezionego (tak samo jak okno Znajdz i zamien).
+        """
         if not old_text:
             raise InvalidReferenceError("Parametr old_text nie moze byc pusty")
 
@@ -314,18 +335,21 @@ class WordController(BaseController):
             else content.lower().count(str(old_text).lower())
         )
 
-        find = document.Content.Find
-        find.ClearFormatting()
-        find.Replacement.ClearFormatting()
-        find.Text = str(old_text)
-        find.Replacement.Text = str(new_text)
-        find.Forward = True
-        find.Wrap = WD_FIND_CONTINUE
-        find.Format = False
-        find.MatchCase = bool(match_case)
-        find.MatchWholeWord = False
-        find.MatchWildcards = False
-        replaced = bool(find.Execute(Replace=WD_REPLACE_ALL))
+        replaced = bool(
+            document.Content.Find.Execute(
+                FindText=str(old_text),
+                MatchCase=bool(match_case),
+                MatchWholeWord=False,
+                MatchWildcards=False,
+                MatchSoundsLike=False,
+                MatchAllWordForms=False,
+                Forward=True,
+                Wrap=WD_FIND_CONTINUE,
+                Format=False,
+                ReplaceWith=str(new_text),
+                Replace=WD_REPLACE_ALL,
+            )
+        )
 
         return {
             "replacements": occurrences if replaced else 0,
@@ -363,8 +387,7 @@ class WordController(BaseController):
         first_index = None
         paragraphs = []
         for text, level in entries:
-            paragraph = self._new_paragraph(document)
-            paragraph.Range.Text = text
+            paragraph = self._append_paragraph(document, text)
             paragraphs.append((paragraph, level))
             if first_index is None:
                 first_index = int(document.Paragraphs.Count)

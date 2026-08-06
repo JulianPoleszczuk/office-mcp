@@ -17,6 +17,7 @@ from bridge.utils.com_helpers import (
     PP_SAVE_FORMATS,
     SHAPE_TYPES,
     bgr_to_hex,
+    com_address,
     com_error,
     lookup_constant,
     normalize_path,
@@ -852,7 +853,7 @@ class PowerPointController(BaseController):
         data_range = worksheet.Range(
             worksheet.Cells(1, 1), worksheet.Cells(last_row, last_column)
         )
-        chart.SetSourceData(f"='{worksheet.Name}'!{data_range.Address(True, True)}")
+        chart.SetSourceData(f"='{worksheet.Name}'!{com_address(data_range)}")
 
         try:
             workbook.Close()

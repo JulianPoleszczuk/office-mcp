@@ -340,6 +340,22 @@ def to_com_matrix(values: Sequence[Sequence[Any]]) -> tuple[tuple[Any, ...], ...
     return tuple(tuple(row) for row in to_matrix(values))
 
 
+def com_address(target: Any, absolute: bool = True) -> str:
+    """Adres zakresu ($A$1:$C$5) odporny na roznice w dispatchu COM.
+
+    Zaleznie od tego, czy pywin32 zna typelib danej instancji Excela,
+    ``Range.Address`` bywa metoda albo od razu gotowym tekstem - w arkuszu
+    osadzonym w wykresie PowerPointa jest to wlasnie ten drugi przypadek.
+    """
+    address = target.Address
+    if callable(address):
+        try:
+            return str(address(absolute, absolute))
+        except (TypeError, com_error):
+            return str(address())
+    return str(address)
+
+
 def normalize_path(path: str, must_exist: bool = False) -> str:
     """Rozwija ``~``, zmienne srodowiskowe i zwraca sciezke absolutna Windows."""
     if not path or not isinstance(path, str):
