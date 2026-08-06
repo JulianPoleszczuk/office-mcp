@@ -200,7 +200,7 @@ class TestTransportIntegration:
         assert response.ok is False
         assert response.error["type"] == "ComConnectionError"
 
-    def test_malformed_line_does_not_kill_connection(self, echo_server):
+    def test_malformed_line_does_not_kill_connection_echo(self, echo_server):
         server = echo_server(lambda req: "ok")
 
         with socket.create_connection(("127.0.0.1", server.port), timeout=5) as sock:
@@ -216,3 +216,94 @@ class TestTransportIntegration:
         assert broken.ok is False
         assert broken.error["type"] == "ProtocolError"
         assert good.ok is True
+
+
+class _FakeController:
+    """Kontroler bez COM - sprawdza sama sciezke zadanie -> odpowiedz w Bridge."""
+
+    def __init__(self, connection):
+        self.connection = connection
+
+    def dispatch(self, action_name, params):
+        if action_name == "com_down":
+            raise ComConnectionError("Excel nie odpowiada")
+        if action_name == "boom":
+            raise RuntimeError("nieoczekiwany blad kontrolera")
+        if action_name == "nieznana":
+            raise ProtocolError("Nieznana akcja 'nieznana'")
+        return {"action": action_name, "params": params}
+
+
+@pytest.fixture
+def bridge_server(monkeypatch):
+    from bridge import main as bridge_main
+
+    monkeypatch.setattr(
+        bridge_main,
+        "CONTROLLER_TYPES",
+        {app: _FakeController for app in ("powerpoint", "excel", "word")},
+    )
+
+    server = bridge_main.BridgeServer(host="127.0.0.1", port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    yield server
+
+    server.shutdown()
+    server.server_close()
+
+
+def send(server, request: Request) -> Response:
+    with socket.create_connection(server.server_address, timeout=5) as sock:
+        stream = sock.makefile("rwb")
+        stream.write(request.encode())
+        stream.flush()
+        return Response.decode(stream.readline())
+
+
+class TestBridgeServer:
+    def test_routes_request_to_controller(self, bridge_server):
+        response = send(
+            bridge_server, Request(app="excel", action="set_cell", params={"value": 7})
+        )
+
+        assert response.ok is True
+        assert response.result == {"action": "set_cell", "params": {"value": 7}}
+
+    def test_bridge_error_becomes_structured_response(self, bridge_server):
+        response = send(bridge_server, Request(app="excel", action="com_down"))
+
+        assert response.ok is False
+        assert response.error["type"] == "ComConnectionError"
+        assert "nie odpowiada" in response.error["message"]
+
+    def test_unexpected_exception_does_not_crash_bridge(self, bridge_server):
+        failed = send(bridge_server, Request(app="word", action="boom"))
+        recovered = send(bridge_server, Request(app="word", action="save"))
+
+        assert failed.ok is False
+        assert failed.error["type"] == "RuntimeError"
+        assert recovered.ok is True
+
+    def test_unknown_action_is_reported_as_protocol_error(self, bridge_server):
+        response = send(bridge_server, Request(app="powerpoint", action="nieznana"))
+
+        assert response.ok is False
+        assert response.error["type"] == "ProtocolError"
+
+    def test_unknown_app_is_rejected_before_dispatch(self, bridge_server):
+        with socket.create_connection(bridge_server.server_address, timeout=5) as sock:
+            stream = sock.makefile("rwb")
+            stream.write(b'{"id": "1", "app": "notepad", "action": "save"}\n')
+            stream.flush()
+            response = Response.decode(stream.readline())
+
+        assert response.ok is False
+        assert response.error["type"] == "ProtocolError"
+
+    def test_controller_instances_are_reused_per_app(self, bridge_server):
+        send(bridge_server, Request(app="word", action="save"))
+        send(bridge_server, Request(app="word", action="save"))
+
+        assert len(bridge_server.dispatcher._controllers) == 1
