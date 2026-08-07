@@ -1952,6 +1952,8 @@ def doc_insert_image(
     width: float | None = None,
     height: float | None = None,
     position: str = "inline",
+    unit: str = "pt",
+    own_paragraph: bool = True,
 ) -> dict[str, Any]:
     """Wstawia obraz: 'inline' w tekscie albo 'float' jako obiekt plywajacy."""
     return call_bridge(
@@ -1962,6 +1964,8 @@ def doc_insert_image(
             "width": width,
             "height": height,
             "position": position,
+            "unit": unit,
+            "own_paragraph": own_paragraph,
         },
     )
 

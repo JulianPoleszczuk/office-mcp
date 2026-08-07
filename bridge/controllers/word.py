@@ -580,13 +580,23 @@ class WordController(BaseController):
         width: float | None = None,
         height: float | None = None,
         position: str = "inline",
+        unit: str = "pt",
+        own_paragraph: bool = True,
     ) -> dict[str, Any]:
-        """Wstawia obraz w tekscie (``inline``) albo jako obiekt plywajacy (``float``)."""
+        """Wstawia obraz w tekscie (``inline``) albo jako obiekt plywajacy (``float``).
+
+        ``width`` i ``height`` sa domyslnie w punktach, tak jak reszta wymiarow
+        w COM - ``unit="cm"`` pozwala podac rozmiar po ludzku.
+        """
         target_path = self.resolve_existing_path(image_path)
         document = self.document()
         mode = str(position).strip().lower()
 
         if mode in ("inline", "w_tekscie"):
+            if own_paragraph:
+                # Bez wlasnego akapitu obraz dokleja sie do ostatniego zdania,
+                # ktore justowanie rozciaga wtedy na cala szerokosc strony.
+                self._append_paragraph(document, "")
             shape = document.InlineShapes.AddPicture(
                 FileName=target_path,
                 LinkToFile=False,
@@ -607,7 +617,7 @@ class WordController(BaseController):
             )
 
         if width is not None:
-            shape.Width = float(width)
+            shape.Width = points(width, unit)
         if height is not None:
             shape.Height = float(height)
 
