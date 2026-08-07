@@ -1,8 +1,8 @@
-"""Kontroler PowerPointa - tworzenie i edycja prezentacji przez COM.
+"""PowerPoint controller - building and editing presentations over COM.
 
-Wszystkie akcje pracuja na aktywnej prezentacji (ostatnio otwartej lub
-utworzonej). Indeksy slajdow sa 1-based, tak jak w samym PowerPoincie,
-a pozycje i rozmiary podaje sie w punktach (1 cm = 28.35 pt).
+Every action works on the presentation the plugin is pinned to (the last one
+opened or created). Slide indexes are 1-based, as in PowerPoint itself, and
+positions and sizes are given in points (1 cm = 28.35 pt).
 """
 
 from __future__ import annotations
@@ -63,8 +63,7 @@ PP_AUTOSIZE_FIT = 1
 PP_ALIGNMENTS: dict[str, int] = {
     "left": 1,
     "center": 2,
-    "centre": 2,
-    "right": 3,
+        "right": 3,
     "justify": 4,
 }
 
@@ -87,9 +86,9 @@ PLACEHOLDER_TYPES = {
     16: "date",
 }
 
-# Nazwa pola tekstowego, ktore set_title tworzy na ukladzie bez placeholdera
-# tytulu. Dzieki niej skrot "title" dziala pozniej we wszystkich narzedziach,
-# a nie tylko w tym, ktore ten tytul wstawilo.
+# Name of the text box that set_title creates on a layout without a title
+# placeholder. Thanks to it the "title" shortcut works in every other tool,
+# not only in the one that inserted the title.
 TITLE_FALLBACK_NAME = "office-mcp Title"
 
 CONTENT_PLACEHOLDERS = (2, 4, 6, 7, 8, 12)
@@ -103,7 +102,7 @@ THEME_DIRECTORIES = (
 
 
 class PowerPointController(BaseController):
-    """Akcje ``ppt_*`` - operacje na zywej instancji PowerPointa."""
+    """``ppt_*`` actions - operations on a live PowerPoint instance."""
 
     APP_KEY = "powerpoint"
     DISPLAY_NAME = "PowerPoint"
@@ -111,15 +110,15 @@ class PowerPointController(BaseController):
 
     def __init__(self, connection: Any) -> None:
         super().__init__(connection)
-        # Sciezka prezentacji, na ktorej pracujemy. PowerPoint ignoruje
-        # Windows.Activate(), gdy aplikacja nie jest na wierzchu, wiec
-        # ActivePresentation potrafi wskazywac zupelnie inny plik niz ten,
-        # ktory wlasnie otworzylismy - a wtedy kolejne narzedzia po cichu
-        # edytuja nie ten dokument.
+        # Path of the presentation we work on. PowerPoint ignores
+        # Windows.Activate() when the app is not in the foreground, so
+        # ActivePresentation can point at a completely different file than the
+        # one we just opened - and then every later tool silently edits the
+        # wrong document.
         self._target_path: str | None = None
 
     def _remember(self, presentation: Any) -> Any:
-        """Zapamietuje prezentacje jako biezaca dla kolejnych wywolan."""
+        """Pins a presentation as the current one for later calls."""
         try:
             self._target_path = (
                 os.path.normcase(str(presentation.FullName))
@@ -131,11 +130,11 @@ class PowerPointController(BaseController):
         return presentation
 
     def presentation(self) -> Any:
-        """Prezentacja, na ktorej pracujemy - zapamietana, nie 'aktywna'."""
+        """The presentation we work on - pinned, not 'active'."""
         app = self.app
         if app.Presentations.Count == 0:
             raise DocumentNotFoundError(
-                "Brak otwartej prezentacji - uzyj ppt_create_presentation albo "
+                "No presentation open - use ppt_create_presentation or "
                 "ppt_open_presentation"
             )
 
@@ -149,7 +148,7 @@ class PowerPointController(BaseController):
                         return candidate
                 except com_error:
                     continue
-            # Zapamietana prezentacja zostala zamknieta poza wtyczka.
+            # The pinned presentation was closed outside the plugin.
             self._target_path = None
 
         try:
@@ -158,13 +157,13 @@ class PowerPointController(BaseController):
             return app.Presentations(app.Presentations.Count)
 
     def slide(self, slide_index: Any) -> Any:
-        """Slajd o zadanym indeksie (1-based) z walidacja zakresu."""
+        """Slide at the given 1-based index, with range validation."""
         presentation = self.presentation()
         index = self.require_index(slide_index, presentation.Slides.Count, "slide_index")
         return presentation.Slides(index)
 
     def _goto_slide(self, index: int) -> None:
-        """Przewija okno PowerPointa na slajd, zeby uzytkownik widzial zmiane."""
+        """Scrolls the PowerPoint window to the slide so the user sees the change."""
         try:
             self.presentation().Windows(1).View.GotoSlide(index)
         except com_error:
@@ -218,20 +217,20 @@ class PowerPointController(BaseController):
         return info
 
     def _find_shape(self, slide: Any, shape_id: Any) -> Any:
-        """Znajduje ksztalt po ``Id`` (liczba) albo po nazwie (tekst)."""
+        """Finds a shape by ``Id`` (number) or by name (text)."""
         if isinstance(shape_id, str) and not shape_id.isdigit():
             for index in range(1, slide.Shapes.Count + 1):
                 shape = slide.Shapes(index)
                 if str(shape.Name).lower() == shape_id.lower():
                     return shape
-            raise InvalidReferenceError(f"Slajd nie zawiera ksztaltu '{shape_id}'")
+            raise InvalidReferenceError(f"The slide has no shape named '{shape_id}'")
 
         wanted = int(shape_id)
         for index in range(1, slide.Shapes.Count + 1):
             shape = slide.Shapes(index)
             if int(shape.Id) == wanted:
                 return shape
-        raise InvalidReferenceError(f"Slajd nie zawiera ksztaltu o id {wanted}")
+        raise InvalidReferenceError(f"The slide has no shape with id {wanted}")
 
     def _title_shape(self, slide: Any) -> Any | None:
         try:
@@ -250,18 +249,18 @@ class PowerPointController(BaseController):
         return None
 
     def _placeholder_frame(self, slide: Any, placeholder: Any) -> Any:
-        """Zwraca ``TextFrame`` wskazanego placeholdera (``content`` / ``title``)."""
+        """Returns the ``TextFrame`` of the given placeholder (``content`` / ``title``)."""
         if isinstance(placeholder, (int, str)) and str(placeholder).isdigit():
             return self._find_shape(slide, int(placeholder)).TextFrame
 
         wanted = str(placeholder or "content").strip().lower()
-        if wanted in ("title", "tytul"):
+        if wanted in ("title",):
             shape = self._title_shape(slide)
             if shape is None:
-                raise InvalidReferenceError("Slajd nie ma placeholdera tytulu")
+                raise InvalidReferenceError("The slide has no title placeholder")
             return shape.TextFrame
 
-        wanted_types = CONTENT_PLACEHOLDERS if wanted in ("content", "body", "tresc") else None
+        wanted_types = CONTENT_PLACEHOLDERS if wanted in ("content", "body") else None
         for index in range(1, slide.Shapes.Placeholders.Count + 1):
             shape = slide.Shapes.Placeholders(index)
             try:
@@ -273,7 +272,7 @@ class PowerPointController(BaseController):
                     return shape.TextFrame
 
         if wanted_types is None:
-            raise InvalidReferenceError(f"Nieznany placeholder: {placeholder!r}")
+            raise InvalidReferenceError(f"Unknown placeholder: {placeholder!r}")
 
         shape = slide.Shapes.AddTextbox(
             MSO_TEXT_HORIZONTAL, 60, 140, 600, 300
@@ -282,7 +281,7 @@ class PowerPointController(BaseController):
 
     @action("create_presentation")
     def create_presentation(self, path: str, template: str | None = None) -> dict[str, Any]:
-        """Tworzy nowa prezentacje (opcjonalnie z szablonu .potx/.thmx) i zapisuje ja."""
+        """Creates a presentation (optionally from a .potx/.thmx template) and saves it."""
         target = self.resolve_target_path(path)
         presentation = self.app.Presentations.Add(WithWindow=MSO_TRUE)
 
@@ -297,7 +296,7 @@ class PowerPointController(BaseController):
 
     @action("open_presentation")
     def open_presentation(self, path: str) -> dict[str, Any]:
-        """Otwiera plik; jesli jest juz otwarty, tylko aktywuje jego okno."""
+        """Opens the file; if it is already open, just activates its window."""
         target = self.resolve_existing_path(path)
         app = self.app
 
@@ -321,7 +320,7 @@ class PowerPointController(BaseController):
 
     @action("save")
     def save(self, path: str | None = None) -> dict[str, Any]:
-        """Zapisuje prezentacje (``Save``) albo zapisuje jako nowy plik (``SaveAs``)."""
+        """Saves the presentation (``Save``) or saves it as a new file (``SaveAs``)."""
         presentation = self.presentation()
 
         if path:
@@ -333,25 +332,25 @@ class PowerPointController(BaseController):
                 )
         elif not presentation.Path:
             raise InvalidReferenceError(
-                "Prezentacja nie ma jeszcze pliku - podaj parametr path"
+                "The presentation has no file yet - pass the path parameter"
             )
         else:
             presentation.Save()
 
-        # SaveAs przepina prezentacje na nowy plik - zapamietana sciezka
-        # musi za tym nadazyc, inaczej presentation() jej nie odnajdzie.
+        # SaveAs repoints the presentation at a new file - the pinned path has
+        # to follow, otherwise presentation() will not find it again.
         return self._presentation_summary(self._remember(presentation))
 
     @action("close")
     def close(self, save: bool = True) -> dict[str, Any]:
-        """Zamyka prezentacje, opcjonalnie zapisujac zmiany."""
+        """Closes the presentation, optionally saving changes."""
         presentation = self.presentation()
         name = str(presentation.Name)
 
         if save:
             if not presentation.Path:
                 raise InvalidReferenceError(
-                    "Prezentacja nie byla zapisana - najpierw ppt_save z parametrem path"
+                    "The presentation was never saved - run ppt_save with a path first"
                 )
             presentation.Save()
         else:
@@ -363,7 +362,7 @@ class PowerPointController(BaseController):
 
     @action("get_presentation_info")
     def get_presentation_info(self) -> dict[str, Any]:
-        """Podstawowe metadane prezentacji: rozmiar slajdu, motyw, sciezka."""
+        """Basic presentation metadata: slide size, theme, path."""
         presentation = self.presentation()
         info = self._presentation_summary(presentation)
 
@@ -384,7 +383,7 @@ class PowerPointController(BaseController):
 
     @action("list_slides")
     def list_slides(self) -> dict[str, Any]:
-        """Lista slajdow: indeks, tytul, uklad i liczba ksztaltow."""
+        """Slide list: index, title, layout and shape count."""
         presentation = self.presentation()
         slides = []
 
@@ -413,7 +412,7 @@ class PowerPointController(BaseController):
 
     @action("get_slide_content")
     def get_slide_content(self, slide_index: int) -> dict[str, Any]:
-        """Pelna zawartosc slajdu: ksztalty, ich pozycje, teksty i notatki."""
+        """Full slide content: shapes, their positions, text and notes."""
         slide = self.slide(slide_index)
         shapes = [
             self._shape_summary(slide.Shapes(index))
@@ -447,7 +446,7 @@ class PowerPointController(BaseController):
         index: int | None = None,
         title: str | None = None,
     ) -> dict[str, Any]:
-        """Dodaje slajd o wskazanym ukladzie; ``index=None`` oznacza koniec."""
+        """Adds a slide with the given layout; ``index=None`` means at the end."""
         presentation = self.presentation()
         count = presentation.Slides.Count
         position = count + 1 if index is None else max(1, min(int(index), count + 1))
@@ -470,7 +469,7 @@ class PowerPointController(BaseController):
 
     @action("delete_slide")
     def delete_slide(self, slide_index: int) -> dict[str, Any]:
-        """Usuwa slajd o podanym indeksie."""
+        """Deletes the slide at the given index."""
         presentation = self.presentation()
         index = self.require_index(slide_index, presentation.Slides.Count, "slide_index")
         presentation.Slides(index).Delete()
@@ -478,7 +477,7 @@ class PowerPointController(BaseController):
 
     @action("duplicate_slide")
     def duplicate_slide(self, slide_index: int) -> dict[str, Any]:
-        """Duplikuje slajd - kopia laduje bezposrednio za oryginalem."""
+        """Duplicates a slide - the copy lands right after the original."""
         slide = self.slide(slide_index)
         copy = slide.Duplicate()
         try:
@@ -490,7 +489,7 @@ class PowerPointController(BaseController):
 
     @action("reorder_slide")
     def reorder_slide(self, from_index: int, to_index: int) -> dict[str, Any]:
-        """Przenosi slajd na inna pozycje."""
+        """Moves a slide to another position."""
         presentation = self.presentation()
         count = presentation.Slides.Count
         source = self.require_index(from_index, count, "from_index")
@@ -501,7 +500,7 @@ class PowerPointController(BaseController):
 
     @action("set_title")
     def set_title(self, slide_index: int, text: str) -> dict[str, Any]:
-        """Ustawia tytul slajdu; gdy uklad go nie ma, wstawia pole tekstowe."""
+        """Sets the slide title; if the layout has none, inserts a text box."""
         slide = self.slide(slide_index)
         shape = self._title_shape(slide)
         created = False
@@ -534,7 +533,7 @@ class PowerPointController(BaseController):
         color: Any = None,
         align: str | None = None,
     ) -> dict[str, Any]:
-        """Wstawia pole tekstowe w podanym miejscu slajdu (wspolrzedne w punktach)."""
+        """Inserts a text box at the given spot on the slide (points)."""
         slide = self.slide(slide_index)
         shape = slide.Shapes.AddTextbox(
             MSO_TEXT_HORIZONTAL, float(left), float(top), float(width), float(height)
@@ -563,13 +562,13 @@ class PowerPointController(BaseController):
         items: list[Any],
         placeholder: Any = "content",
     ) -> dict[str, Any]:
-        """Wypelnia placeholder lista punktowana z obsluga zagniezdzen.
+        """Fills a placeholder with a bulleted list, nesting supported.
 
-        ``items`` przyjmuje teksty (``"Punkt"``) lub slowniki z poziomem
+        ``items`` accepts plain text (``"Point"``) or dictionaries with an
         wciecia (``{"text": "Podpunkt", "level": 2}``).
         """
         if not isinstance(items, list) or not items:
-            raise InvalidReferenceError("Lista 'items' nie moze byc pusta")
+            raise InvalidReferenceError("List 'items' cannot be empty")
 
         slide = self.slide(slide_index)
         frame = self._placeholder_frame(slide, placeholder)
@@ -600,9 +599,9 @@ class PowerPointController(BaseController):
         slide_index: int | None = None,
         match_case: bool = False,
     ) -> dict[str, Any]:
-        """Podmienia tekst na jednym slajdzie albo w calej prezentacji."""
+        """Replaces text on one slide or across the whole presentation."""
         if not old_text:
-            raise InvalidReferenceError("Parametr old_text nie moze byc pusty")
+            raise InvalidReferenceError("Parameter old_text cannot be empty")
 
         presentation = self.presentation()
         if slide_index is None:
@@ -690,7 +689,7 @@ class PowerPointController(BaseController):
 
     @action("set_speaker_notes")
     def set_speaker_notes(self, slide_index: int, text: str) -> dict[str, Any]:
-        """Ustawia notatki prelegenta dla slajdu."""
+        """Sets the speaker notes for a slide."""
         slide = self.slide(slide_index)
         try:
             slide.NotesPage.Shapes.Placeholders(2).TextFrame.TextRange.Text = (
@@ -698,7 +697,7 @@ class PowerPointController(BaseController):
             )
         except com_error as exc:
             raise UnsupportedOperationError(
-                "Slajd nie ma miejsca na notatki prelegenta"
+                "The slide has no room for speaker notes"
             ) from exc
         return {"slide_index": int(slide_index), "characters": len(text)}
 
@@ -714,12 +713,12 @@ class PowerPointController(BaseController):
         italic: bool | None = None,
         underline: bool | None = None,
     ) -> dict[str, Any]:
-        """Formatuje caly tekst wskazanego ksztaltu."""
+        """Formats all the text of the given shape."""
         slide = self.slide(slide_index)
         shape = self._find_shape(slide, shape_id)
 
         if not shape.HasTextFrame:
-            raise InvalidReferenceError("Wskazany ksztalt nie zawiera tekstu")
+            raise InvalidReferenceError("The given shape contains no text")
 
         font = shape.TextFrame.TextRange.Font
         applied: dict[str, Any] = {}
@@ -748,7 +747,7 @@ class PowerPointController(BaseController):
 
     @action("apply_theme")
     def apply_theme(self, theme_name_or_path: str) -> dict[str, Any]:
-        """Nadaje motyw z pliku ``.thmx``/``.potx`` albo z galerii motywow Office."""
+        """Applies a theme from a ``.thmx``/``.potx`` file or the Office gallery."""
         theme_path = self._resolve_theme(theme_name_or_path)
         presentation = self.presentation()
         presentation.ApplyTemplate(theme_path)
@@ -770,8 +769,8 @@ class PowerPointController(BaseController):
                     return os.path.join(directory, entry)
 
         raise DocumentNotFoundError(
-            f"Nie znaleziono motywu '{name_or_path}'. COM przyjmuje sciezke do pliku "
-            ".thmx lub .potx - podaj pelna sciezke albo nazwe motywu z galerii Office."
+            f"Theme '{name_or_path}' not found. COM takes a path to a .thmx or "
+            ".potx file - pass a full path or a theme name from the Office gallery."
         )
 
     @action("set_background")
@@ -781,9 +780,9 @@ class PowerPointController(BaseController):
         color: Any = None,
         image_path: str | None = None,
     ) -> dict[str, Any]:
-        """Ustawia tlo slajdu - jednolity kolor albo obraz."""
+        """Sets the slide background - a solid colour or an image."""
         if color is None and not image_path:
-            raise InvalidReferenceError("Podaj kolor albo sciezke do obrazu tla")
+            raise InvalidReferenceError("Pass a colour or a path to a background image")
 
         slide = self.slide(slide_index)
         slide.FollowMasterBackground = MSO_FALSE
@@ -802,7 +801,7 @@ class PowerPointController(BaseController):
 
     @action("set_slide_layout")
     def set_slide_layout(self, slide_index: int, layout_name: str) -> dict[str, Any]:
-        """Zmienia uklad slajdu - po nazwie ukladu z wzorca albo nazwie standardowej."""
+        """Changes the slide layout - by master layout name or a standard name."""
         slide = self.slide(slide_index)
         presentation = self.presentation()
 
@@ -832,7 +831,7 @@ class PowerPointController(BaseController):
         width: float | None = None,
         height: float | None = None,
     ) -> dict[str, Any]:
-        """Wstawia obraz; brak width/height zachowuje oryginalne proporcje."""
+        """Inserts an image; omitting width/height keeps the original proportions."""
         slide = self.slide(slide_index)
         picture = slide.Shapes.AddPicture(
             FileName=self.resolve_existing_path(image_path),
@@ -865,13 +864,13 @@ class PowerPointController(BaseController):
         height: float,
         title: str | None = None,
     ) -> dict[str, Any]:
-        """Wstawia wykres i wypelnia jego arkusz danymi.
+        """Inserts a chart and fills its worksheet with data.
 
-        ``series_data`` przyjmuje slownik ``{"nazwa": [wartosci]}``, liste
+        ``series_data`` accepts a dictionary ``{"name": [values]}``, a list of
         slownikow ``{"name": ..., "values": [...]}`` albo sama liste serii.
         """
         if not categories:
-            raise InvalidReferenceError("Lista 'categories' nie moze byc pusta")
+            raise InvalidReferenceError("List 'categories' cannot be empty")
 
         slide = self.slide(slide_index)
         chart_constant = lookup_constant(chart_type, CHART_TYPES, "chart_type")
@@ -905,7 +904,7 @@ class PowerPointController(BaseController):
     def _fill_chart_data(
         self, chart: Any, categories: list[Any], series: list[tuple[str, list[Any]]]
     ) -> None:
-        """Wpisuje dane do arkusza osadzonego w wykresie i ustawia zakres zrodlowy."""
+        """Writes data into the chart's embedded sheet and sets the source range."""
         chart.ChartData.Activate()
         workbook = chart.ChartData.Workbook
         worksheet = workbook.Worksheets(1)
@@ -954,10 +953,10 @@ class PowerPointController(BaseController):
         height: float,
         header_bold: bool = True,
     ) -> dict[str, Any]:
-        """Wstawia tabele i wypelnia ja danymi (nadmiarowe komorki sa pomijane)."""
+        """Inserts a table and fills it with data (extra cells are skipped)."""
         rows, cols = int(rows), int(cols)
         if rows < 1 or cols < 1:
-            raise InvalidReferenceError("Tabela musi miec co najmniej 1 wiersz i 1 kolumne")
+            raise InvalidReferenceError("A table needs at least 1 row and 1 column")
 
         slide = self.slide(slide_index)
         shape = slide.Shapes.AddTable(
@@ -1003,10 +1002,10 @@ class PowerPointController(BaseController):
         line_color: Any = None,
         line_width: float | None = None,
     ) -> dict[str, Any]:
-        """Wstawia ksztalt (prostokat, strzalka, gwiazda...) z opcjonalnym tekstem.
+        """Inserts a shape (rectangle, arrow, star...) with optional text.
 
-        ``line_color="none"`` usuwa obrys - bez tego ksztalt dostaje domyslna
-        ramke z motywu, ktora rzadko pasuje do wlasnej kolorystyki.
+        ``line_color="none"`` removes the outline - without it the shape gets a
+        default theme border, which rarely matches your own colours.
         """
         slide = self.slide(slide_index)
         shape_constant = lookup_constant(shape_type, SHAPE_TYPES, "shape_type")
@@ -1042,7 +1041,7 @@ class PowerPointController(BaseController):
 
     @action("delete_shape")
     def delete_shape(self, slide_index: int, shape_id: Any) -> dict[str, Any]:
-        """Usuwa ksztalt ze slajdu - po id albo nazwie."""
+        """Deletes a shape from the slide - by id or by name."""
         slide = self.slide(slide_index)
         shape = self._resolve_shape(slide, shape_id)
         removed = {"shape_id": int(shape.Id), "shape_name": to_python(shape.Name)}
@@ -1066,7 +1065,7 @@ class PowerPointController(BaseController):
         height: float | None = None,
         rotation: float | None = None,
     ) -> dict[str, Any]:
-        """Przesuwa, skaluje i obraca istniejacy ksztalt (podane pola, w punktach)."""
+        """Moves, scales and rotates an existing shape (given fields, in points)."""
         if all(value is None for value in (left, top, width, height, rotation)):
             raise InvalidReferenceError(
                 "Podaj przynajmniej jedno z: left, top, width, height, rotation"
@@ -1075,8 +1074,8 @@ class PowerPointController(BaseController):
         slide = self.slide(slide_index)
         shape = self._resolve_shape(slide, shape_id)
 
-        # Przy zablokowanych proporcjach ustawienie szerokosci zmienia takze
-        # wysokosc - zdejmujemy blokade, gdy podano oba wymiary naraz.
+        # With the aspect ratio locked, setting the width also changes the
+        # height - we lift the lock when both dimensions are given at once.
         previous_lock: Any = None
         if width is not None and height is not None:
             try:
@@ -1118,7 +1117,7 @@ class PowerPointController(BaseController):
     def set_shape_order(
         self, slide_index: int, shape_id: Any, order: str = "front"
     ) -> dict[str, Any]:
-        """Zmienia warstwe ksztaltu: front, back, forward albo backward."""
+        """Changes the shape layer: front, back, forward or backward."""
         slide = self.slide(slide_index)
         shape = self._resolve_shape(slide, shape_id)
         shape.ZOrder(lookup_constant(order, MSO_ZORDER, "order"))
@@ -1140,10 +1139,10 @@ class PowerPointController(BaseController):
         width: int | None = None,
         height: int | None = None,
     ) -> dict[str, Any]:
-        """Zapisuje slajd jako obraz (PNG/JPG/GIF/BMP/WMF/EMF wg rozszerzenia).
+        """Saves the slide as an image (PNG/JPG/GIF/BMP/WMF/EMF by extension).
 
-        Bez ``width``/``height`` obraz ma 1920 px szerokosci i wysokosc
-        wyliczona z proporcji slajdu.
+        Without ``width``/``height`` the image is 1920 px wide and the height is
+        computed from the slide proportions.
         """
         slide = self.slide(slide_index)
         target = self.resolve_target_path(path)
@@ -1151,7 +1150,7 @@ class PowerPointController(BaseController):
         extension = os.path.splitext(target)[1].lower()
         if extension not in PP_EXPORT_FILTERS:
             raise InvalidReferenceError(
-                f"Nieobslugiwane rozszerzenie obrazu: {extension or '(brak)'}. "
+                f"Unsupported image extension: {extension or '(none)'}. "
                 f"Dostepne: {', '.join(sorted(PP_EXPORT_FILTERS))}"
             )
 
@@ -1178,13 +1177,13 @@ class PowerPointController(BaseController):
 
     @action("export_pdf")
     def export_pdf(self, path: str, embed_fonts: bool = True) -> dict[str, Any]:
-        """Eksportuje cala prezentacje do PDF-u bez zmiany biezacego pliku.
+        """Exports the whole presentation to PDF without changing the current file.
 
-        Uzywa ``SaveCopyAs``, a nie ``ExportAsFixedFormat`` - ta druga metoda
-        jest niewywolywalna przez pywin32 (wrapper podstawia ``PyOleEmpty`` pod
-        parametr ``ExternalExporter``, czego nie da sie przekonwertowac na COM).
-        ``SaveAs`` odpada, bo przepialoby prezentacje otwarta w PowerPoincie
-        na plik PDF.
+        Uses ``SaveCopyAs``, not ``ExportAsFixedFormat`` - the latter cannot be
+        called through pywin32 (the wrapper puts ``PyOleEmpty`` in the
+        ``ExternalExporter`` parameter, which cannot be converted to COM).
+        ``SaveAs`` is out too, because it would repoint the presentation open in
+        PowerPoint at the PDF file.
         """
         presentation = self.presentation()
         target = self.resolve_target_path(path)
@@ -1204,7 +1203,7 @@ class PowerPointController(BaseController):
         }
 
     def _shape_range(self, slide: Any, shape_ids: Any, minimum: int = 2) -> Any:
-        """``ShapeRange`` z listy id/nazw - podstawa grupowania i wyrownywania."""
+        """``ShapeRange`` from a list of ids/names - the basis of grouping and aligning."""
         if not isinstance(shape_ids, (list, tuple)) or len(shape_ids) < minimum:
             raise InvalidReferenceError(
                 f"Podaj liste co najmniej {minimum} ksztaltow (id albo nazw)"
@@ -1220,7 +1219,7 @@ class PowerPointController(BaseController):
 
         if len(indexes) < minimum:
             raise InvalidReferenceError(
-                f"Znaleziono tylko {len(indexes)} z {len(shape_ids)} wskazanych ksztaltow"
+                f"Found only {len(indexes)} of the {len(shape_ids)} shapes given"
             )
         return slide.Shapes.Range(indexes)
 
@@ -1228,7 +1227,7 @@ class PowerPointController(BaseController):
     def group_shapes(
         self, slide_index: int, shape_ids: list[Any], name: str | None = None
     ) -> dict[str, Any]:
-        """Laczy ksztalty w grupe - odtad ruszaja sie i animuja jako calosc."""
+        """Groups shapes - from now on they move and animate as one."""
         slide = self.slide(slide_index)
         group = self._shape_range(slide, shape_ids).Group()
 
@@ -1245,7 +1244,7 @@ class PowerPointController(BaseController):
 
     @action("ungroup_shapes")
     def ungroup_shapes(self, slide_index: int, shape_id: Any) -> dict[str, Any]:
-        """Rozbija grupe na pojedyncze ksztalty."""
+        """Breaks a group back into individual shapes."""
         slide = self.slide(slide_index)
         group = self._resolve_shape(slide, shape_id)
 
@@ -1253,7 +1252,7 @@ class PowerPointController(BaseController):
             parts = group.Ungroup()
         except com_error as exc:
             raise InvalidReferenceError(
-                f"Ksztalt {shape_id!r} nie jest grupa"
+                f"Shape {shape_id!r} is not a group"
             ) from exc
 
         return {
@@ -1270,9 +1269,9 @@ class PowerPointController(BaseController):
         align: str,
         relative_to_slide: bool = False,
     ) -> dict[str, Any]:
-        """Wyrownuje ksztalty: left, center, right, top, middle, bottom.
+        """Aligns shapes: left, center, right, top, middle, bottom.
 
-        ``relative_to_slide=True`` wyrownuje wzgledem krawedzi slajdu, a nie
+        ``relative_to_slide=True`` aligns to the slide edges rather than to
         wzgledem siebie nawzajem.
         """
         slide = self.slide(slide_index)
@@ -1300,7 +1299,7 @@ class PowerPointController(BaseController):
         direction: str = "horizontal",
         relative_to_slide: bool = False,
     ) -> dict[str, Any]:
-        """Rozklada ksztalty w rownych odstepach w poziomie albo w pionie."""
+        """Spreads shapes at equal intervals, horizontally or vertically."""
         slide = self.slide(slide_index)
         shape_range = self._shape_range(slide, shape_ids, minimum=3)
         shape_range.Distribute(
@@ -1325,13 +1324,13 @@ class PowerPointController(BaseController):
         target_slide: int | None = None,
         tooltip: str | None = None,
     ) -> dict[str, Any]:
-        """Podpina pod ksztalt link - zewnetrzny (``url``) albo do slajdu.
+        """Attaches a link to a shape - external (``url``) or to a slide.
 
-        Podanie samego ``tooltip`` bez ``url``/``target_slide`` nie ma sensu,
-        bo podpowiedz pokazuje sie tylko przy aktywnym linku.
+        Passing only ``tooltip`` without ``url``/``target_slide`` makes no sense,
+        because the hint only shows on an active link.
         """
         if url and target_slide is not None:
-            raise InvalidReferenceError("Podaj 'url' albo 'target_slide', nie oba")
+            raise InvalidReferenceError("Pass 'url' or 'target_slide', not both")
         if not url and target_slide is None:
             raise InvalidReferenceError("Podaj 'url' albo 'target_slide'")
 
@@ -1383,16 +1382,16 @@ class PowerPointController(BaseController):
         show_slide_number: bool | None = None,
         show_date: bool | None = None,
     ) -> dict[str, Any]:
-        """Stopka, numer slajdu i data; bez ``slide_index`` na wszystkich slajdach.
+        """Footer, slide number and date; without ``slide_index`` on every slide.
 
-        Podanie samego ``footer_text`` wlacza stopke - inaczej ustawiony tekst
-        byloby widac dopiero po recznym zaznaczeniu pola w PowerPoincie.
+        Passing only ``footer_text`` turns the footer on - otherwise the text
+        would stay invisible until the field is ticked by hand in PowerPoint.
         """
         if all(
             value is None
             for value in (footer_text, show_footer, show_slide_number, show_date)
         ):
-            raise InvalidReferenceError("Nie podano zadnego pola do zmiany")
+            raise InvalidReferenceError("No field given to change")
 
         presentation = self.presentation()
         if slide_index is None:
@@ -1409,8 +1408,8 @@ class PowerPointController(BaseController):
                 try:
                     headers.Footer.Text = _paragraph_text(footer_text)
                 except com_error:
-                    # Uklad bez placeholdera stopki (np. "blank") odrzuca zapis
-                    # tekstu na slajdzie - tekst zyje wtedy na wzorcu.
+                    # A layout without a footer placeholder (e.g. "blank")
+                    # rejects the text on the slide - it then lives on the master.
                     presentation.SlideMaster.HeadersFooters.Footer.Text = (
                         _paragraph_text(footer_text)
                     )
@@ -1434,12 +1433,12 @@ class PowerPointController(BaseController):
         }
 
     def _theme(self) -> Any:
-        """Motyw wzorca slajdow - jedno miejsce, z ktorego zyje cala kolorystyka."""
+        """Slide master theme - the single place the whole palette comes from."""
         return self.presentation().SlideMaster.Theme
 
     @action("get_theme")
     def get_theme(self) -> dict[str, Any]:
-        """Zwraca palete i czcionki motywu - do sprawdzenia, co jest ustawione."""
+        """Returns the theme palette and fonts - to check what is set."""
         theme = self._theme()
         scheme = theme.ThemeColorScheme
         fonts = theme.ThemeFontScheme
@@ -1460,7 +1459,7 @@ class PowerPointController(BaseController):
         """Podmienia kolory w palecie motywu.
 
         ``colors`` to slownik ``{"accent1": "#10A37F", "dark1": "#0B1014"}``.
-        Nazwy pochodza z ``MSO_THEME_COLORS``: ``dark1``/``text1``,
+        Names come from ``MSO_THEME_COLORS``: ``dark1``/``text1``,
         ``light1``/``background1``, ``dark2``, ``light2``, ``accent1``-``accent6``,
         ``hyperlink``, ``followed_hyperlink``.
         """
@@ -1472,7 +1471,7 @@ class PowerPointController(BaseController):
         scheme = self._theme().ThemeColorScheme
         applied: dict[str, Any] = {}
         for name, value in colors.items():
-            index = lookup_constant(name, MSO_THEME_COLORS, "nazwa koloru motywu")
+            index = lookup_constant(name, MSO_THEME_COLORS, "theme colour name")
             scheme.Colors(index).RGB = parse_color(value)
             applied[str(name)] = bgr_to_hex(scheme.Colors(index).RGB)
 
@@ -1482,7 +1481,7 @@ class PowerPointController(BaseController):
     def set_theme_fonts(
         self, major: str | None = None, minor: str | None = None
     ) -> dict[str, Any]:
-        """Ustawia czcionki motywu: ``major`` dla naglowkow, ``minor`` dla tresci."""
+        """Sets theme fonts: ``major`` for headings, ``minor`` for body text."""
         if not major and not minor:
             raise InvalidReferenceError("Podaj 'major', 'minor' albo oba")
 
@@ -1504,13 +1503,13 @@ class PowerPointController(BaseController):
         image_path: str | None = None,
         apply_to_slides: bool = True,
     ) -> dict[str, Any]:
-        """Ustawia tlo na wzorcu slajdow - raz dla calej prezentacji.
+        """Sets the background on the slide master - once for the whole deck.
 
-        ``apply_to_slides=True`` wlacza slajdom ``FollowMasterBackground``, wiec
-        te, ktore mialy wlasne tlo z ``set_background``, wracaja pod wzorzec.
+        ``apply_to_slides=True`` turns on ``FollowMasterBackground`` for slides,
+        so those with their own background from ``set_background`` return to it.
         """
         if color is None and not image_path:
-            raise InvalidReferenceError("Podaj kolor albo sciezke do obrazu tla")
+            raise InvalidReferenceError("Pass a colour or a path to a background image")
 
         presentation = self.presentation()
         fill = presentation.SlideMaster.Background.Fill
@@ -1553,7 +1552,7 @@ class PowerPointController(BaseController):
         shadow_transparency: float | None = None,
         corner_radius: float | None = None,
     ) -> dict[str, Any]:
-        """Wyglad istniejacego ksztaltu: gradient, przezroczystosc, cien, obrys.
+        """Look of an existing shape: gradient, transparency, shadow, outline.
 
         ``gradient_from`` + ``gradient_to`` wlaczaja gradient dwukolorowy
         (``gradient_style``: horizontal, vertical, diagonal_up, diagonal_down,
@@ -1576,7 +1575,7 @@ class PowerPointController(BaseController):
             }
         elif gradient_from is not None or gradient_to is not None:
             raise InvalidReferenceError(
-                "Gradient wymaga obu kolorow: gradient_from i gradient_to"
+                "A gradient needs both colours: gradient_from and gradient_to"
             )
         elif fill_color is not None:
             if str(fill_color).strip().lower() == "none":
@@ -1640,11 +1639,11 @@ class PowerPointController(BaseController):
         if corner_radius is not None:
             if int(shape.Adjustments.Count) < 1:
                 raise InvalidReferenceError(
-                    "Ten ksztalt nie ma uchwytu regulacji - corner_radius dziala "
+                    "This shape has no adjustment handle - corner_radius works "
                     "np. na rounded_rectangle"
                 )
             # Adjustments to parametryzowana wlasciwosc COM; pywin32 wystawia ja
-            # do zapisu jako SetItem, zwyklego przypisania nie da sie uzyc.
+            # writable through SetItem; plain assignment does not work.
             shape.Adjustments.SetItem(1, _unit_fraction(corner_radius, "corner_radius"))
             applied["corner_radius"] = round(float(shape.Adjustments.Item(1)), 4)
 
@@ -1670,17 +1669,17 @@ class PowerPointController(BaseController):
         word_wrap: bool | None = None,
         margin: float | None = None,
     ) -> dict[str, Any]:
-        """Typografia akapitu: interlinia, odstepy, wyrownanie, kotwica pionowa.
+        """Paragraph typography: line spacing, gaps, alignment, vertical anchor.
 
-        ``paragraph`` bez wartosci obejmuje caly tekst ksztaltu, z numerem
-        (1-based) tylko wskazany akapit. ``line_spacing`` to wielokrotnosc
-        wysokosci wiersza (1.0 = pojedyncza), odstepy w punktach.
+        ``paragraph`` left empty covers all the text of the shape; with a number
+        (1-based) only that paragraph. ``line_spacing`` is a multiple of the line
+        height (1.0 = single), gaps are in points.
         """
         slide = self.slide(slide_index)
         shape = self._resolve_shape(slide, shape_id)
 
         if not shape.HasTextFrame:
-            raise InvalidReferenceError("Ten ksztalt nie ma ramki tekstowej")
+            raise InvalidReferenceError("This shape has no text frame")
 
         frame = shape.TextFrame
         text_range = frame.TextRange
@@ -1724,7 +1723,7 @@ class PowerPointController(BaseController):
             applied["margin"] = float(margin)
 
         if not applied:
-            raise InvalidReferenceError("Nie podano zadnego pola do zmiany")
+            raise InvalidReferenceError("No field given to change")
 
         self._goto_slide(int(slide_index))
         return {
@@ -1749,18 +1748,18 @@ class PowerPointController(BaseController):
         value_axis_min: float | None = None,
         value_axis_max: float | None = None,
     ) -> dict[str, Any]:
-        """Dostraja wykres do kolorystyki slajdu.
+        """Tunes a chart to the slide colours.
 
-        ``background="none"`` robi tlo wykresu przezroczyste, ``legend`` przyjmuje
+        ``background="none"`` makes the chart background transparent, ``legend``
         ``False`` albo pozycje (``bottom``, ``top``, ``left``, ``right``),
-        ``text_color`` farbuje osie, legende i tytul naraz.
+        ``text_color`` paints axes, legend and title at once.
         """
         slide = self.slide(slide_index)
         shape = self._resolve_shape(slide, shape_id)
 
         if not shape.HasChart:
             raise InvalidReferenceError(
-                f"Ksztalt {shape_id!r} nie jest wykresem - uzyj ppt_add_chart"
+                f"Shape {shape_id!r} is not a chart - use ppt_add_chart"
             )
 
         applied = apply_chart_format(
@@ -1794,10 +1793,10 @@ class PowerPointController(BaseController):
         height: float | None = None,
         autoplay: bool = False,
     ) -> dict[str, Any]:
-        """Wstawia wideo albo dzwiek jako obiekt osadzony w prezentacji.
+        """Inserts video or audio as an object embedded in the presentation.
 
-        ``autoplay=True`` dopina do slajdu efekt odtwarzania startujacy razem
-        z poprzednim, zamiast czekac na klikniecie.
+        ``autoplay=True`` attaches a play effect starting with the previous one,
+        instead of waiting for a click.
         """
         slide = self.slide(slide_index)
         target = self.resolve_existing_path(media_path)
@@ -1853,11 +1852,11 @@ class PowerPointController(BaseController):
     def list_smartart_layouts(
         self, search: str | None = None, category: str | None = None
     ) -> dict[str, Any]:
-        """Dostepne uklady SmartArt: klucz, nazwa i kategoria.
+        """Available SmartArt layouts: key, name and category.
 
-        ``name`` jest zlokalizowane (polski Office zwraca "Podstawowa lista
-        blokowa"), wiec do wyboru ukladu lepiej uzywac ``key`` - koncowki
-        identyfikatora URN, ktora jest ta sama we wszystkich wersjach jezykowych.
+        ``name`` is localised - a non-English Office returns translated layout
+        names - so pick a layout by ``key`` instead: the tail of the URN
+        identifier, which is the same in every language version.
         Kategorie tez sa niezalezne od jezyka: list, process, cycle, hierarchy,
         relationship, matrix, pyramid, picture.
         """
@@ -1889,7 +1888,7 @@ class PowerPointController(BaseController):
         }
 
     def _smartart_layout(self, layout: Any) -> Any:
-        """Uklad SmartArt po numerze, kluczu URN albo nazwie (takze zlokalizowanej)."""
+        """SmartArt layout by number, URN key or name (localised names included)."""
         layouts = self.app.SmartArtLayouts
         if isinstance(layout, int) or str(layout).strip().isdigit():
             index = self.require_index(layout, int(layouts.Count), "layout")
@@ -1912,8 +1911,8 @@ class PowerPointController(BaseController):
                     return com_layout
 
         raise InvalidReferenceError(
-            f"Nie znaleziono ukladu SmartArt pasujacego do {layout!r}. Nazwy sa "
-            "zlokalizowane - uzyj ppt_list_smartart_layouts, zeby poznac klucze "
+            f"No SmartArt layout matches {layout!r}. Names are localised - use "
+            "ppt_list_smartart_layouts to see the keys "
             "(np. 'bProcess3', 'hierarchy1') albo filtruj po kategorii."
         )
 
@@ -1928,10 +1927,10 @@ class PowerPointController(BaseController):
         width: float,
         height: float,
     ) -> dict[str, Any]:
-        """Wstawia diagram SmartArt i wypelnia go tekstem.
+        """Inserts a SmartArt diagram and fills it with text.
 
         ``items`` przyjmuje liste tekstow albo slownikow
-        ``{"text": ..., "level": 1}`` - poziom 2 i wyzszy tworzy podwezly.
+        ``{"text": ..., "level": 1}`` - level 2 and deeper creates child nodes.
         """
         slide = self.slide(slide_index)
         chosen = self._smartart_layout(layout)
@@ -1945,9 +1944,9 @@ class PowerPointController(BaseController):
         while int(smart_art.AllNodes.Count) > 0:
             smart_art.AllNodes.Item(1).Delete()
 
-        # Podwezly powstaja przez AddNode(below) na rodzicu. Demote() na wezle
+        # Child nodes come from AddNode(below) on the parent. Demote() on a node
         # z AllNodes.Add() czesc ukladow (np. hierarchy1) odrzuca komunikatem
-        # "operacja nie jest obslugiwana przez biezacy obiekt".
+        # "operation not supported by the current object".
         last_at_level: dict[int, Any] = {}
         added = 0
         for text, level in entries:
@@ -1974,7 +1973,7 @@ class PowerPointController(BaseController):
 
     @action("list_sections")
     def list_sections(self) -> dict[str, Any]:
-        """Sekcje prezentacji wraz z zakresem slajdow."""
+        """Presentation sections with their slide ranges."""
         properties = self.presentation().SectionProperties
         count = int(properties.Count)
 
@@ -1993,7 +1992,7 @@ class PowerPointController(BaseController):
 
     @action("add_section")
     def add_section(self, name: str, before_slide: int = 1) -> dict[str, Any]:
-        """Zaklada sekcje zaczynajaca sie od wskazanego slajdu."""
+        """Creates a section starting at the given slide."""
         presentation = self.presentation()
         index = self.require_index(
             before_slide, presentation.Slides.Count, "before_slide"
@@ -2010,7 +2009,7 @@ class PowerPointController(BaseController):
     def delete_section(
         self, section_index: int, delete_slides: bool = False
     ) -> dict[str, Any]:
-        """Usuwa sekcje; ``delete_slides=True`` kasuje tez jej slajdy."""
+        """Deletes a section; ``delete_slides=True`` removes its slides too."""
         presentation = self.presentation()
         properties = presentation.SectionProperties
         index = self.require_index(section_index, int(properties.Count), "section_index")
@@ -2050,16 +2049,16 @@ class PowerPointController(BaseController):
             try:
                 presentation.SlideShowWindow.View.Exit()
             except com_error as exc:
-                raise InvalidReferenceError("Pokaz slajdow nie jest uruchomiony") from exc
+                raise InvalidReferenceError("The slide show is not running") from exc
             return {"command": "stop", "running": False}
 
         if wanted == "goto":
             if slide_index is None:
-                raise InvalidReferenceError("'goto' wymaga parametru slide_index")
+                raise InvalidReferenceError("'goto' requires the slide_index parameter")
             index = self.require_index(
                 slide_index, presentation.Slides.Count, "slide_index"
             )
-            # Tuz po Run() PowerPoint jeszcze buduje okno pokazu i odrzuca
+            # Right after Run() PowerPoint is still building the show window and
             # wywolania (RPC_E_CALL_REJECTED) - jedno ponowienie wystarcza.
             for attempt in range(2):
                 try:
@@ -2068,24 +2067,24 @@ class PowerPointController(BaseController):
                 except com_error as exc:
                     if attempt:
                         raise InvalidReferenceError(
-                            "Pokaz slajdow nie jest uruchomiony albo PowerPoint "
-                            "jeszcze go nie otworzyl"
+                            "The slide show is not running, or PowerPoint has "
+                            "not opened it yet"
                         ) from exc
                     time.sleep(0.6)
             return {"command": "goto", "slide_index": index, "running": True}
 
         raise InvalidReferenceError(
-            f"Nieznana komenda: {command!r}. Dostepne: start, stop, goto"
+            f"Unknown command: {command!r}. Available: start, stop, goto"
         )
 
     @action("copy_slide_to")
     def copy_slide_to(
         self, slide_index: int, target_path: str, position: int | None = None
     ) -> dict[str, Any]:
-        """Kopiuje slajd do innej prezentacji (istniejacego pliku .pptx).
+        """Copies a slide into another presentation (an existing .pptx file).
 
-        Uzywa ``Slides.InsertFromFile``, a nie schowka - schowek bywa zajety
-        przez uzytkownika i psuje wynik w nieprzewidywalny sposob.
+        Uses ``Slides.InsertFromFile`` rather than the clipboard - the clipboard
+        can be busy with the user's own copy and spoil the result unpredictably.
         """
         presentation = self.presentation()
         index = self.require_index(slide_index, presentation.Slides.Count, "slide_index")
@@ -2093,12 +2092,12 @@ class PowerPointController(BaseController):
 
         if not presentation.Path:
             raise DocumentNotFoundError(
-                "Zrodlowa prezentacja nie ma jeszcze pliku - zapisz ja przez ppt_save"
+                "The source presentation has no file yet - save it with ppt_save"
             )
         source = str(presentation.FullName)
         if os.path.normcase(source) == os.path.normcase(target):
             raise InvalidReferenceError(
-                "Zrodlo i cel to ten sam plik - uzyj ppt_duplicate_slide"
+                "Source and target are the same file - use ppt_duplicate_slide"
             )
 
         with self.alerts_suppressed():
@@ -2131,15 +2130,15 @@ class PowerPointController(BaseController):
         }
 
     def _resolve_shape(self, slide: Any, shape_id: Any) -> Any:
-        """Ksztalt po id/nazwie, ale rozumie tez ``title`` i ``content``."""
+        """Shape by id/name, but also understands ``title`` and ``content``."""
         if isinstance(shape_id, str):
             wanted = shape_id.strip().lower()
-            if wanted in ("title", "tytul"):
+            if wanted in ("title",):
                 shape = self._title_shape(slide)
                 if shape is None:
-                    raise InvalidReferenceError("Slajd nie ma placeholdera tytulu")
+                    raise InvalidReferenceError("The slide has no title placeholder")
                 return shape
-            if wanted in ("content", "body", "tresc"):
+            if wanted in ("content", "body"):
                 for index in range(1, slide.Shapes.Placeholders.Count + 1):
                     shape = slide.Shapes.Placeholders(index)
                     try:
@@ -2148,7 +2147,7 @@ class PowerPointController(BaseController):
                         continue
                     if placeholder_type in CONTENT_PLACEHOLDERS:
                         return shape
-                raise InvalidReferenceError("Slajd nie ma placeholdera tresci")
+                raise InvalidReferenceError("The slide has no content placeholder")
         return self._find_shape(slide, shape_id)
 
     @action("add_animation")
@@ -2163,11 +2162,11 @@ class PowerPointController(BaseController):
         delay: float | None = None,
         exit_effect: bool = False,
     ) -> dict[str, Any]:
-        """Dodaje animacje ksztaltu do sekwencji glownej slajdu.
+        """Adds a shape animation to the slide's main sequence.
 
-        ``shape_id`` to id ksztaltu, jego nazwa albo skrot ``title`` /
-        ``content``. ``level`` decyduje, czy animowany jest caly ksztalt
-        (``shape``), czy kolejne akapity tekstu (``by_paragraph``).
+        ``shape_id`` is a shape id, its name, or the ``title`` / ``content``
+        shortcut. ``level`` decides whether the whole shape animates
+        (``shape``) or its text paragraph by paragraph (``by_paragraph``).
         ``exit_effect=True`` zamienia efekt wejscia na wyjscie.
         """
         slide = self.slide(slide_index)
@@ -2181,7 +2180,7 @@ class PowerPointController(BaseController):
             sequence = slide.TimeLine.MainSequence
         except (com_error, AttributeError) as exc:
             raise UnsupportedOperationError(
-                "Ta wersja PowerPointa nie udostepnia osi czasu animacji "
+                "This version of PowerPoint exposes no animation timeline "
                 "(Slide.TimeLine)"
             ) from exc
 
@@ -2222,14 +2221,14 @@ class PowerPointController(BaseController):
 
     @action("list_animations")
     def list_animations(self, slide_index: int) -> dict[str, Any]:
-        """Zwraca sekwencje animacji slajdu w kolejnosci odtwarzania."""
+        """Returns the slide's animation sequence in playback order."""
         slide = self.slide(slide_index)
 
         try:
             sequence = slide.TimeLine.MainSequence
         except (com_error, AttributeError) as exc:
             raise UnsupportedOperationError(
-                "Ta wersja PowerPointa nie udostepnia osi czasu animacji "
+                "This version of PowerPoint exposes no animation timeline "
                 "(Slide.TimeLine)"
             ) from exc
 
@@ -2274,7 +2273,7 @@ class PowerPointController(BaseController):
         advance_on_click: bool = True,
         advance_after: float | None = None,
     ) -> dict[str, Any]:
-        """Ustawia przejscie slajdu; bez ``slide_index`` obejmuje cala prezentacje.
+        """Sets the slide transition; without ``slide_index`` the whole deck.
 
         ``advance_after`` w sekundach wlacza automatyczne przejscie po czasie -
         niezaleznie od ``advance_on_click``.
@@ -2319,13 +2318,13 @@ class PowerPointController(BaseController):
 
 
 def _normalize_outline(items: Any) -> list[tuple[str, int]]:
-    """Sprowadza liste punktow do par ``(tekst, poziom)``.
+    """Reduces a list of bullet points to ``(text, level)`` pairs.
 
-    Przyjmuje same teksty (``"Punkt"``), slowniki (``{"text": ..., "level": 2}``)
-    oraz pary ``("Punkt", 2)``. Poziom jest przycinany do zakresu 1-5.
+    Accepts plain text (``"Point"``), dictionaries (``{"text": ..., "level": 2}``)
+    and pairs ``("Point", 2)``. The level is clamped to the range 1-5.
     """
     if not isinstance(items, (list, tuple)) or not items:
-        raise ValueError("Lista 'items' nie moze byc pusta")
+        raise ValueError("List 'items' cannot be empty")
 
     entries: list[tuple[str, int]] = []
     for item in items:
@@ -2341,12 +2340,12 @@ def _normalize_outline(items: Any) -> list[tuple[str, int]]:
 
 
 def _paragraph_text(text: Any) -> str:
-    """Zamienia znaki nowej linii na separator akapitu PowerPointa.
+    """Turns newline characters into PowerPoint's paragraph separator.
 
-    COM traktuje ``\\n`` jako *miekki* lamacz wiersza wewnatrz jednego akapitu -
-    tekst wyglada wtedy jak kilka linii, ale ``Paragraphs().Count`` zwraca 1
-    i formatowanie akapitowe (odstepy, wyrownanie per akapit) nie ma czego
-    zlapac. Prawdziwym separatorem akapitu jest ``\\r``.
+    COM treats ``\\n`` as a *soft* line break inside one paragraph - the text
+    then looks like several lines, but ``Paragraphs().Count`` returns 1 and
+    paragraph formatting (spacing, per-paragraph alignment) has nothing to
+    latch onto. The real paragraph separator is ``\\r``.
     """
     return str(text).replace("\r\n", "\r").replace("\n", "\r")
 
@@ -2356,17 +2355,17 @@ def _unit_fraction(value: Any, label: str) -> float:
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"{label} musi byc liczba") from exc
+        raise ValueError(f"{label} must be a number") from exc
 
     if 1 < number <= 100:
         number = number / 100
     if not 0.0 <= number <= 1.0:
-        raise ValueError(f"{label} musi miescic sie w zakresie 0.0-1.0 (albo 0-100%)")
+        raise ValueError(f"{label} must be within 0.0-1.0 (or 0-100%)")
     return number
 
 
 def _normalize_series(series_data: Any, expected_length: int) -> list[tuple[str, list[Any]]]:
-    """Sprowadza rozne formaty serii danych do listy par ``(nazwa, wartosci)``."""
+    """Reduces the various series formats to a list of ``(name, values)`` pairs."""
     series: list[tuple[str, list[Any]]] = []
 
     if isinstance(series_data, dict):
@@ -2384,11 +2383,11 @@ def _normalize_series(series_data: Any, expected_length: int) -> list[tuple[str,
             series.append((name, values))
     else:
         raise InvalidReferenceError(
-            "series_data musi byc slownikiem, lista serii albo lista list wartosci"
+            "series_data must be a dictionary, a list of series, or a list of value lists"
         )
 
     if not series:
-        raise InvalidReferenceError("Brak danych do wykresu")
+        raise InvalidReferenceError("No data for the chart")
 
     normalized = []
     for name, values in series:

@@ -1,7 +1,7 @@
-"""Kontroler Excela - dane, formuly, formatowanie i wykresy przez COM.
+"""Excel controller - data, formulas, formatting and charts over COM.
 
-Arkusz mozna wskazac nazwa (``"Budzet"``) albo numerem (``1``). Zakresy
-podaje sie w notacji A1 (``"A1:D10"``), tak jak w interfejsie Excela.
+A sheet can be given by name (``"Budget"``) or by number (``1``). Ranges use
+A1 notation (``"A1:D10"``), exactly as in the Excel interface.
 """
 
 from __future__ import annotations
@@ -78,18 +78,18 @@ HORIZONTAL_ALIGNMENTS = {
 
 
 class ExcelController(BaseController):
-    """Akcje ``xl_*`` - operacje na zywej instancji Excela."""
+    """``xl_*`` actions - operations on a live Excel instance."""
 
     APP_KEY = "excel"
     DISPLAY_NAME = "Excel"
     ALERTS_OFF = False
 
     def workbook(self) -> Any:
-        """Aktywny skoroszyt albo czytelny blad, gdy nic nie jest otwarte."""
+        """The active workbook, or a clear error when nothing is open."""
         app = self.app
         if app.Workbooks.Count == 0:
             raise DocumentNotFoundError(
-                "Brak otwartego skoroszytu - uzyj xl_create_workbook albo xl_open_workbook"
+                "No workbook open - use xl_create_workbook or xl_open_workbook"
             )
         try:
             return app.ActiveWorkbook
@@ -97,7 +97,7 @@ class ExcelController(BaseController):
             return app.Workbooks(app.Workbooks.Count)
 
     def worksheet(self, sheet: Any) -> Any:
-        """Arkusz po nazwie (bez rozroznienia wielkosci liter) albo po numerze."""
+        """Sheet by name (case-insensitive) or by number."""
         workbook = self.workbook()
         sheets = workbook.Worksheets
         names = [str(sheets(index).Name) for index in range(1, sheets.Count + 1)]
@@ -112,28 +112,28 @@ class ExcelController(BaseController):
                 return sheets(position)
 
         raise InvalidReferenceError(
-            f"Arkusz '{sheet}' nie istnieje. Dostepne: {', '.join(names) or 'brak'}"
+            f"Sheet '{sheet}' does not exist. Available: {', '.join(names) or 'none'}"
         )
 
     def range_of(self, worksheet: Any, reference: str) -> Any:
-        """Zakres A1 z czytelnym bledem przy zlym adresie."""
+        """An A1 range, with a clear error on a bad address."""
         if not reference or not isinstance(reference, str):
-            raise InvalidReferenceError("Adres zakresu musi byc tekstem, np. 'A1:D10'")
+            raise InvalidReferenceError("Range address must be a string, e.g. 'A1:D10'")
         try:
             return worksheet.Range(reference)
         except com_error as exc:
             if is_connection_error(exc):
                 raise
             raise InvalidReferenceError(
-                f"Nieprawidlowy zakres '{reference}' w arkuszu {worksheet.Name}"
+                f"Invalid range '{reference}' in sheet {worksheet.Name}"
             ) from exc
 
     def _block_address(self, anchor: Any, rows: int, columns: int) -> str:
-        """Adres A1 bloku o zadanym rozmiarze, liczony od komorki zakotwiczenia.
+        """A1 address of a block of the given size, measured from an anchor cell.
 
-        Swiadomie nie uzywamy ``Range.Resize`` - przy pozno wiazanym COM
-        ``Resize(5, 3)`` bywa interpretowane jako domyslna wlasciwosc ``Item``
-        i zwraca pojedyncza komorke zamiast bloku.
+        We deliberately avoid ``Range.Resize`` - under late-bound COM,
+        ``Resize(5, 3)`` is sometimes read as the default ``Item`` property and
+        returns a single cell instead of a block.
         """
         first_row = int(anchor.Row)
         first_column = int(anchor.Column)
@@ -154,7 +154,7 @@ class ExcelController(BaseController):
         }
 
     def _activate(self, worksheet: Any) -> None:
-        """Przelacza widok na arkusz, zeby uzytkownik widzial zmiany na zywo."""
+        """Switches the view to the sheet so the user sees changes live."""
         try:
             worksheet.Activate()
         except com_error:
@@ -162,7 +162,7 @@ class ExcelController(BaseController):
 
     @action("create_workbook")
     def create_workbook(self, path: str) -> dict[str, Any]:
-        """Tworzy nowy skoroszyt i od razu zapisuje go pod wskazana sciezka."""
+        """Creates a new workbook and saves it straight to the given path."""
         target = self.resolve_target_path(path)
         workbook = self.app.Workbooks.Add()
 
@@ -174,7 +174,7 @@ class ExcelController(BaseController):
 
     @action("open_workbook")
     def open_workbook(self, path: str) -> dict[str, Any]:
-        """Otwiera plik albo aktywuje go, jesli jest juz otwarty."""
+        """Opens the file, or activates it if it is already open."""
         target = self.resolve_existing_path(path)
         app = self.app
 
@@ -192,7 +192,7 @@ class ExcelController(BaseController):
 
     @action("save")
     def save(self, path: str | None = None) -> dict[str, Any]:
-        """Zapisuje skoroszyt albo zapisuje go jako nowy plik."""
+        """Saves the workbook, or saves it as a new file."""
         workbook = self.workbook()
 
         if path:
@@ -204,7 +204,7 @@ class ExcelController(BaseController):
                 )
         elif not workbook.Path:
             raise InvalidReferenceError(
-                "Skoroszyt nie ma jeszcze pliku - podaj parametr path"
+                "The workbook has no file yet - pass the path parameter"
             )
         else:
             workbook.Save()
@@ -213,14 +213,14 @@ class ExcelController(BaseController):
 
     @action("close")
     def close(self, save: bool = True) -> dict[str, Any]:
-        """Zamyka skoroszyt, opcjonalnie zapisujac zmiany."""
+        """Closes the workbook, optionally saving changes."""
         workbook = self.workbook()
         name = str(workbook.Name)
 
         if save:
             if not workbook.Path:
                 raise InvalidReferenceError(
-                    "Skoroszyt nie byl zapisany - najpierw xl_save z parametrem path"
+                    "The workbook was never saved - run xl_save with a path first"
                 )
             workbook.Save()
 
@@ -231,13 +231,13 @@ class ExcelController(BaseController):
 
     @action("add_sheet")
     def add_sheet(self, name: str, index: int | None = None) -> dict[str, Any]:
-        """Dodaje arkusz o podanej nazwie; ``index`` ustawia jego pozycje."""
+        """Adds a sheet with the given name; ``index`` sets its position."""
         workbook = self.workbook()
         sheets = workbook.Worksheets
         existing = [str(sheets(i).Name).lower() for i in range(1, sheets.Count + 1)]
 
         if str(name).lower() in existing:
-            raise InvalidReferenceError(f"Arkusz o nazwie '{name}' juz istnieje")
+            raise InvalidReferenceError(f"A sheet named '{name}' already exists")
 
         if index is None:
             worksheet = sheets.Add(After=sheets(sheets.Count))
@@ -254,11 +254,11 @@ class ExcelController(BaseController):
 
     @action("delete_sheet")
     def delete_sheet(self, name: str) -> dict[str, Any]:
-        """Usuwa arkusz (Excel musi zostac z co najmniej jednym)."""
+        """Deletes a sheet (Excel must keep at least one)."""
         workbook = self.workbook()
         if workbook.Worksheets.Count <= 1:
             raise InvalidReferenceError(
-                "Nie mozna usunac ostatniego arkusza w skoroszycie"
+                "Cannot delete the last sheet in a workbook"
             )
 
         worksheet = self.worksheet(name)
@@ -271,14 +271,14 @@ class ExcelController(BaseController):
 
     @action("rename_sheet")
     def rename_sheet(self, old_name: str, new_name: str) -> dict[str, Any]:
-        """Zmienia nazwe arkusza."""
+        """Renames a sheet."""
         worksheet = self.worksheet(old_name)
         worksheet.Name = str(new_name)
         return {"old_name": str(old_name), "new_name": str(new_name)}
 
     @action("get_workbook_info")
     def get_workbook_info(self) -> dict[str, Any]:
-        """Metadane skoroszytu: lista arkuszy, aktywny arkusz, sciezka."""
+        """Workbook metadata: sheet list, active sheet, path."""
         workbook = self.workbook()
         info = self._workbook_summary(workbook)
         sheets = []
@@ -304,7 +304,7 @@ class ExcelController(BaseController):
 
     @action("get_range_values")
     def get_range_values(self, sheet: Any, range_ref: str) -> dict[str, Any]:
-        """Odczytuje wartosci zakresu jako tablice 2D."""
+        """Reads range values as a 2D array."""
         worksheet = self.worksheet(sheet)
         target = self.range_of(worksheet, range_ref)
         values = from_com_matrix(target.Value)
@@ -319,7 +319,7 @@ class ExcelController(BaseController):
 
     @action("get_used_range")
     def get_used_range(self, sheet: Any) -> dict[str, Any]:
-        """Zwraca faktycznie wypelniony obszar arkusza wraz z danymi."""
+        """Returns the actually filled area of the sheet, with its data."""
         worksheet = self.worksheet(sheet)
         used = worksheet.UsedRange
         values = from_com_matrix(used.Value)
@@ -336,7 +336,7 @@ class ExcelController(BaseController):
 
     @action("set_cell")
     def set_cell(self, sheet: Any, cell_ref: str, value: Any) -> dict[str, Any]:
-        """Wpisuje wartosc do pojedynczej komorki."""
+        """Writes a value into a single cell."""
         worksheet = self.worksheet(sheet)
         target = self.range_of(worksheet, cell_ref)
         target.Value = value
@@ -350,7 +350,7 @@ class ExcelController(BaseController):
 
     @action("set_range")
     def set_range(self, sheet: Any, start_cell: str, values_2d: Any) -> dict[str, Any]:
-        """Wkleja macierz danych naraz - duzo szybciej niz komorka po komorce."""
+        """Pastes a whole matrix at once - far faster than cell by cell."""
         matrix = to_matrix(values_2d)
         if not matrix or not matrix[0]:
             raise InvalidReferenceError("Brak danych do wklejenia")
@@ -372,7 +372,7 @@ class ExcelController(BaseController):
 
     @action("set_formula")
     def set_formula(self, sheet: Any, cell_ref: str, formula: str) -> dict[str, Any]:
-        """Wpisuje formule (``=SUM(A1:A10)``) i zwraca wyliczony wynik."""
+        """Writes a formula (``=SUM(A1:A10)``) and returns the computed result."""
         text = str(formula).strip()
         if not text.startswith("="):
             text = "=" + text
@@ -393,7 +393,7 @@ class ExcelController(BaseController):
     def clear_range(
         self, sheet: Any, range_ref: str, contents_only: bool = True
     ) -> dict[str, Any]:
-        """Czysci zakres - domyslnie same wartosci, opcjonalnie takze formatowanie."""
+        """Clears a range - values only by default, optionally formatting too."""
         worksheet = self.worksheet(sheet)
         target = self.range_of(worksheet, range_ref)
 
@@ -410,7 +410,7 @@ class ExcelController(BaseController):
 
     @action("insert_rows")
     def insert_rows(self, sheet: Any, start_row: int, count: int = 1) -> dict[str, Any]:
-        """Wstawia wiersze, przesuwajac istniejace w dol."""
+        """Inserts rows, pushing existing ones down."""
         first, last = _row_span(start_row, count)
         worksheet = self.worksheet(sheet)
         worksheet.Rows(f"{first}:{last}").Insert()
@@ -419,7 +419,7 @@ class ExcelController(BaseController):
 
     @action("delete_rows")
     def delete_rows(self, sheet: Any, start_row: int, count: int = 1) -> dict[str, Any]:
-        """Usuwa wiersze, przesuwajac pozostale w gore."""
+        """Deletes rows, pulling the rest up."""
         first, last = _row_span(start_row, count)
         worksheet = self.worksheet(sheet)
         worksheet.Rows(f"{first}:{last}").Delete()
@@ -428,7 +428,7 @@ class ExcelController(BaseController):
 
     @action("insert_columns")
     def insert_columns(self, sheet: Any, start_col: Any, count: int = 1) -> dict[str, Any]:
-        """Wstawia kolumny; ``start_col`` przyjmuje litere albo numer."""
+        """Inserts columns; ``start_col`` accepts a letter or a number."""
         first = _column_number(start_col)
         amount = max(1, int(count))
         worksheet = self.worksheet(sheet)
@@ -439,7 +439,7 @@ class ExcelController(BaseController):
 
     @action("delete_columns")
     def delete_columns(self, sheet: Any, start_col: Any, count: int = 1) -> dict[str, Any]:
-        """Usuwa kolumny; ``start_col`` przyjmuje litere albo numer."""
+        """Deletes columns; ``start_col`` accepts a letter or a number."""
         first = _column_number(start_col)
         amount = max(1, int(count))
         worksheet = self.worksheet(sheet)
@@ -450,11 +450,11 @@ class ExcelController(BaseController):
 
     @action("set_row_height")
     def set_row_height(self, sheet: Any, row: Any, height: Any) -> dict[str, Any]:
-        """Wysokosc wiersza w punktach; ``height="auto"`` dopasowuje do tresci."""
+        """Row height in points; ``height=\"auto\"`` fits it to the content."""
         worksheet = self.worksheet(sheet)
         index = int(row)
         if index < 1:
-            raise InvalidReferenceError("Numer wiersza musi byc >= 1")
+            raise InvalidReferenceError("Row number must be >= 1")
 
         target = worksheet.Rows(index)
         if isinstance(height, str) and height.strip().lower() in ("auto", "autofit"):
@@ -477,13 +477,13 @@ class ExcelController(BaseController):
         match_case: bool = False,
         whole_cell: bool = False,
     ) -> dict[str, Any]:
-        """Podmienia tekst; bez ``sheet`` przechodzi przez wszystkie arkusze.
+        """Replaces text; without ``sheet`` it walks every sheet.
 
-        ``whole_cell=True`` wymaga, zeby cala zawartosc komorki byla rowna
-        szukanemu tekstowi - inaczej podmieniany jest kazdy fragment.
+        ``whole_cell=True`` requires the entire cell content to equal the search
+        text - otherwise every matching fragment is replaced.
         """
         if not old_text:
-            raise InvalidReferenceError("'old_text' nie moze byc puste")
+            raise InvalidReferenceError("'old_text' cannot be empty")
 
         workbook = self.workbook()
         if sheet is None:
@@ -527,7 +527,7 @@ class ExcelController(BaseController):
         order: str = "ascending",
         has_headers: bool = True,
     ) -> dict[str, Any]:
-        """Sortuje zakres po kolumnie ``sort_by`` (litera, numer albo adres komorki)."""
+        """Sorts a range by column ``sort_by`` (letter, number or cell address)."""
         worksheet = self.worksheet(sheet)
         target = self.range_of(worksheet, range_ref)
 
@@ -538,8 +538,8 @@ class ExcelController(BaseController):
             key = worksheet.Cells(int(target.Row), column)
 
         # Orientation i MatchCase sa "lepkie" - Excel pamieta je z poprzedniego
-        # sortowania w sesji. Bez jawnego xlSortColumns potrafi posortowac
-        # lewo-prawo i poprzestawiac kolumny zamiast wierszy.
+        # sort in the session. Without an explicit xlSortColumns it can sort
+        # left to right and reorder columns instead of rows.
         target.Sort(
             Key1=key,
             Order1=lookup_constant(order, XL_SORT_ORDERS, "order"),
@@ -561,7 +561,7 @@ class ExcelController(BaseController):
     def set_autofilter(
         self, sheet: Any, range_ref: str | None = None, enable: bool = True
     ) -> dict[str, Any]:
-        """Wlacza albo wylacza autofiltr; bez ``range_ref`` obejmuje uzyty obszar."""
+        """Turns AutoFilter on or off; without ``range_ref`` it covers the used range."""
         worksheet = self.worksheet(sheet)
         target = self.range_of(worksheet, range_ref) if range_ref else worksheet.UsedRange
 
@@ -587,7 +587,7 @@ class ExcelController(BaseController):
         target_sheet: Any = None,
         paste: str = "all",
     ) -> dict[str, Any]:
-        """Kopiuje zakres; ``paste`` to ``all``, ``values`` albo ``formats``."""
+        """Copies a range; ``paste`` is ``all``, ``values`` or ``formats``."""
         source_sheet = self.worksheet(sheet)
         source = self.range_of(source_sheet, range_ref)
         destination_sheet = (
@@ -629,10 +629,10 @@ class ExcelController(BaseController):
         input_message: str | None = None,
         error_message: str | None = None,
     ) -> dict[str, Any]:
-        """Sprawdzanie poprawnosci danych - lista rozwijana albo zakres wartosci.
+        """Data validation - a dropdown list or a range of allowed values.
 
-        Dla ``validation_type="list"`` wystarczy ``values`` (lista pozycji albo
-        odwolanie do zakresu). Pozostale typy (``whole_number``, ``decimal``,
+        For ``validation_type=\"list\"`` just pass ``values`` (a list of entries or
+        a range reference). The other types (``whole_number``, ``decimal``,
         ``date``, ``time``, ``text_length``, ``custom``) uzywaja ``formula``,
         ``formula2`` i ``operator``.
         """
@@ -650,7 +650,7 @@ class ExcelController(BaseController):
                 first = str(values)
         if first is None:
             raise InvalidReferenceError(
-                "Podaj 'values' (dla listy) albo 'formula' dla pozostalych typow"
+                "Pass 'values' (for a list) or 'formula' for the other types"
             )
 
         operator_constant = (
@@ -687,7 +687,7 @@ class ExcelController(BaseController):
 
     @action("get_cell_formula")
     def get_cell_formula(self, sheet: Any, range_ref: str) -> dict[str, Any]:
-        """Zwraca formuly zakresu (a nie wyliczone wartosci) wraz z wynikami."""
+        """Returns range formulas (not computed values) along with the results."""
         worksheet = self.worksheet(sheet)
         target = self.range_of(worksheet, range_ref)
 
@@ -714,17 +714,17 @@ class ExcelController(BaseController):
     def export_pdf(
         self, path: str, sheet: Any = None, range_ref: str | None = None
     ) -> dict[str, Any]:
-        """Eksportuje skoroszyt, arkusz albo zakres do PDF-u.
+        """Exports the workbook, a sheet or a range to PDF.
 
         W przeciwienstwie do PowerPointa Excel wystawia ``ExportAsFixedFormat``
-        w formie wywolywalnej przez pywin32, wiec nie trzeba obchodzic tego
-        przez ``SaveCopyAs``.
+        in a form pywin32 can call, so there is no need to work around it via
+        ``SaveCopyAs``.
         """
         target_path = self.resolve_target_path(path)
 
         if range_ref is not None:
             if sheet is None:
-                raise InvalidReferenceError("'range_ref' wymaga podania 'sheet'")
+                raise InvalidReferenceError("'range_ref' requires 'sheet' as well")
             source = self.range_of(self.worksheet(sheet), range_ref)
             scope = "range"
         elif sheet is not None:
@@ -749,11 +749,11 @@ class ExcelController(BaseController):
     def export_range_image(
         self, sheet: Any, range_ref: str, path: str
     ) -> dict[str, Any]:
-        """Zapisuje zakres jako obraz PNG - podglad dla modelu.
+        """Saves a range as a PNG image - a preview for the model.
 
-        Excel nie ma bezposredniego eksportu zakresu do obrazu, wiec zakres
-        trafia do schowka jako bitmapa, potem na tymczasowy obiekt wykresu,
-        ktory juz potrafi ``Export``. Wykres jest usuwany na koncu.
+        Excel cannot export a range to an image directly, so the range goes to
+        the clipboard as a bitmap, then onto a temporary chart object, which can
+        ``Export``. The chart is removed afterwards.
         """
         worksheet = self.worksheet(sheet)
         target = self.range_of(worksheet, range_ref)
@@ -762,14 +762,14 @@ class ExcelController(BaseController):
         extension = os.path.splitext(target_path)[1].lower()
         if extension not in (".png", ".jpg", ".jpeg", ".gif"):
             raise InvalidReferenceError(
-                f"Nieobslugiwane rozszerzenie obrazu: {extension or '(brak)'}. "
+                f"Unsupported image extension: {extension or '(none)'}. "
                 "Dostepne: .png, .jpg, .jpeg, .gif"
             )
 
         self._activate(worksheet)
 
-        # CopyPicture bywa odrzucane, gdy schowek jest jeszcze zajety po
-        # poprzedniej operacji (kopiowanie zakresu, tabela przestawna).
+        # CopyPicture gets rejected when the clipboard is still busy after a
+        # previous operation (range copy, pivot table).
         # Jedno ponowienie po wyczyszczeniu trybu kopiowania wystarcza.
         for attempt in range(2):
             try:
@@ -778,8 +778,8 @@ class ExcelController(BaseController):
             except com_error as exc:
                 if attempt:
                     raise UnsupportedOperationError(
-                        "Excel odrzucil kopiowanie zakresu do schowka - zamknij "
-                        "okna dialogowe i sprobuj ponownie"
+                        "Excel rejected copying the range to the clipboard - close "
+                        "any dialog boxes and try again"
                     ) from exc
                 try:
                     self.app.CutCopyMode = False
@@ -805,12 +805,12 @@ class ExcelController(BaseController):
             except com_error:
                 pass
 
-        # Chart.Export potrafi zwrocic sukces i zostawic plik zerowej dlugosci,
-        # gdy arkusz nie byl aktywny albo bitmapa nie zdazyla trafic do schowka.
+        # Chart.Export can report success and leave a zero-length file when the
+        # sheet was not active or the bitmap never reached the clipboard.
         if not os.path.isfile(target_path) or os.path.getsize(target_path) == 0:
             raise UnsupportedOperationError(
-                "Excel zapisal pusty obraz zakresu - sprobuj ponownie po "
-                "aktywowaniu arkusza; przy zajetym schowku eksport bywa zawodny"
+                "Excel wrote an empty range image - try again after activating "
+                "the sheet; with a busy clipboard the export is unreliable"
             )
 
         self._activate(worksheet)
@@ -838,13 +838,13 @@ class ExcelController(BaseController):
         value_axis_min: float | None = None,
         value_axis_max: float | None = None,
     ) -> dict[str, Any]:
-        """Dostraja wykres w arkuszu - odpowiednik ``ppt_format_chart``."""
+        """Tunes a chart in the sheet - the counterpart of ``ppt_format_chart``."""
         worksheet = self.worksheet(sheet)
         charts = worksheet.ChartObjects()
         count = int(charts.Count)
         if not count:
             raise InvalidReferenceError(
-                f"Arkusz {to_python(worksheet.Name)} nie zawiera wykresow"
+                f"Sheet {to_python(worksheet.Name)} contains no charts"
             )
 
         if isinstance(chart, str) and not str(chart).isdigit():
@@ -855,7 +855,7 @@ class ExcelController(BaseController):
                     chart_object = charts(index)
                     break
             if chart_object is None:
-                raise InvalidReferenceError(f"Nie znaleziono wykresu '{chart}'")
+                raise InvalidReferenceError(f"Chart '{chart}' not found")
         else:
             chart_object = charts(self.require_index(chart, count, "chart"))
 
@@ -893,7 +893,7 @@ class ExcelController(BaseController):
         align: str | None = None,
         wrap_text: bool | None = None,
     ) -> dict[str, Any]:
-        """Formatuje zakres - czcionka, kolory, format liczb, wyrownanie."""
+        """Formats a range - font, colours, number format, alignment."""
         worksheet = self.worksheet(sheet)
         target = self.range_of(worksheet, range_ref)
         applied: dict[str, Any] = {}
@@ -920,7 +920,7 @@ class ExcelController(BaseController):
             key = str(align).strip().lower()
             if key not in HORIZONTAL_ALIGNMENTS:
                 raise InvalidReferenceError(
-                    f"Nieznane wyrownanie '{align}'. Dostepne: "
+                    f"Unknown alignment '{align}'. Available: "
                     f"{', '.join(sorted(HORIZONTAL_ALIGNMENTS))}"
                 )
             target.HorizontalAlignment = HORIZONTAL_ALIGNMENTS[key]
@@ -938,7 +938,7 @@ class ExcelController(BaseController):
 
     @action("set_column_width")
     def set_column_width(self, sheet: Any, column: Any, width: Any) -> dict[str, Any]:
-        """Ustawia szerokosc kolumny; ``width="auto"`` dopasowuje do zawartosci."""
+        """Sets column width; ``width=\"auto\"`` fits it to the contents."""
         worksheet = self.worksheet(sheet)
         letter = column_letter(_column_number(column))
         columns = worksheet.Columns(f"{letter}:{letter}")
@@ -955,7 +955,7 @@ class ExcelController(BaseController):
 
     @action("merge_cells")
     def merge_cells(self, sheet: Any, range_ref: str, center: bool = True) -> dict[str, Any]:
-        """Scala komorki zakresu (domyslnie z wysrodkowaniem zawartosci)."""
+        """Merges the cells of a range (centred by default)."""
         worksheet = self.worksheet(sheet)
         target = self.range_of(worksheet, range_ref)
         target.Merge()
@@ -980,16 +980,16 @@ class ExcelController(BaseController):
     ) -> dict[str, Any]:
         """Dodaje regule formatowania warunkowego.
 
-        Obslugiwane ``rule_type``:
+        Supported ``rule_type``:
 
         * ``cell_value`` - ``params``: ``operator`` (``greater``, ``less``,
           ``between``...), ``formula1``, opcjonalnie ``formula2``,
         * ``expression`` - ``params``: ``formula`` (np. ``"=$C2>1000"``),
         * ``text_contains`` - ``params``: ``text``,
-        * ``color_scale`` - ``params``: ``colors`` (2 lub 3 kolory),
+        * ``color_scale`` - ``params``: ``colors`` (2 or 3 colours),
         * ``data_bar`` - ``params``: ``color``.
 
-        Kolory wyniku ustawia sie przez ``fill_color``, ``font_color`` i ``bold``.
+        Result colours are set through ``fill_color``, ``font_color`` and ``bold``.
         """
         settings = dict(params or {})
         worksheet = self.worksheet(sheet)
@@ -1019,7 +1019,7 @@ class ExcelController(BaseController):
             )
             formula1 = settings.get("formula1", settings.get("value"))
             if formula1 is None:
-                raise InvalidReferenceError("Regula cell_value wymaga parametru formula1")
+                raise InvalidReferenceError("Rule cell_value requires the formula1 parameter")
 
             arguments = [XL_CELL_VALUE, operator, _as_formula(formula1)]
             if settings.get("formula2") is not None:
@@ -1029,20 +1029,20 @@ class ExcelController(BaseController):
         elif kind == "expression":
             formula = settings.get("formula")
             if not formula:
-                raise InvalidReferenceError("Regula expression wymaga parametru formula")
+                raise InvalidReferenceError("Rule expression requires the formula parameter")
             condition = target.FormatConditions.Add(XL_EXPRESSION, None, str(formula))
 
         elif kind == "text_contains":
             text = settings.get("text")
             if not text:
-                raise InvalidReferenceError("Regula text_contains wymaga parametru text")
+                raise InvalidReferenceError("Rule text_contains requires the text parameter")
             condition = target.FormatConditions.Add(
                 XL_TEXT_STRING, None, str(text), None, str(text), None, XL_CONTAINS
             )
 
         else:
             raise UnsupportedOperationError(
-                f"Nieznany typ reguly '{rule_type}'. Dostepne: cell_value, expression, "
+                f"Unknown rule type '{rule_type}'. Available: cell_value, expression, "
                 "text_contains, color_scale, data_bar"
             )
 
@@ -1062,7 +1062,7 @@ class ExcelController(BaseController):
 
     @action("freeze_panes")
     def freeze_panes(self, sheet: Any, cell_ref: str) -> dict[str, Any]:
-        """Zamraza wiersze i kolumny powyzej/na lewo od wskazanej komorki."""
+        """Freezes rows and columns above and to the left of the given cell."""
         worksheet = self.worksheet(sheet)
         target = self.range_of(worksheet, cell_ref)
         self._activate(worksheet)
@@ -1089,7 +1089,7 @@ class ExcelController(BaseController):
         height: float,
         title: str | None = None,
     ) -> dict[str, Any]:
-        """Wstawia wykres oparty o zakres danych z tego samego arkusza."""
+        """Inserts a chart based on a data range from the same sheet."""
         worksheet = self.worksheet(sheet)
         source = self.range_of(worksheet, data_range)
         chart_constant = lookup_constant(chart_type, CHART_TYPES, "chart_type")
@@ -1122,7 +1122,7 @@ class ExcelController(BaseController):
         has_headers: bool = True,
         style: str = "TableStyleMedium2",
     ) -> dict[str, Any]:
-        """Zamienia zakres w natywna tabele Excela (ListObject)."""
+        """Turns a range into a native Excel table (ListObject)."""
         worksheet = self.worksheet(sheet)
         target = self.range_of(worksheet, range_ref)
 
@@ -1157,12 +1157,12 @@ class ExcelController(BaseController):
         dest_sheet: Any = None,
         table_name: str = "TabelaPrzestawna1",
     ) -> dict[str, Any]:
-        """Buduje tabele przestawna z zakresu zrodlowego.
+        """Builds a pivot table from a source range.
 
-        ``values`` przyjmuje nazwy pol (``["Kwota"]``) albo slowniki
-        ``{"field": "Kwota", "function": "average"}``.
+        ``values`` accepts field names (``[\"Amount\"]``) or dictionaries
+        ``{"field": "Amount", "function": "average"}``.
 
-        Komorke docelowa przekazujemy do COM jako obiekt ``Range`` - Excel
+        The destination cell is handed to COM as a ``Range`` object - Excel
         odrzuca (E_INVALIDARG) adres tekstowy w notacji A1.
         """
         workbook = self.workbook()
@@ -1203,7 +1203,7 @@ class ExcelController(BaseController):
 
             if function_name not in PIVOT_FUNCTIONS:
                 raise InvalidReferenceError(
-                    f"Nieznana funkcja agregujaca '{function_name}'. Dostepne: "
+                    f"Unknown aggregate function '{function_name}'. Available: "
                     f"{', '.join(sorted(PIVOT_FUNCTIONS))}"
                 )
 
@@ -1226,26 +1226,26 @@ class ExcelController(BaseController):
 
 
 def _row_span(start_row: Any, count: Any) -> tuple[int, int]:
-    """Waliduje zakres wierszy i zwraca pare ``(pierwszy, ostatni)``."""
+    """Validates a row range and returns a ``(first, last)`` pair."""
     try:
         first = int(start_row)
         amount = int(count)
     except (TypeError, ValueError) as exc:
-        raise InvalidReferenceError("Numer wiersza i liczba wierszy musza byc liczbami") from exc
+        raise InvalidReferenceError("Row number and row count must be numbers") from exc
 
     if first < 1:
-        raise InvalidReferenceError("Numer wiersza musi byc >= 1")
+        raise InvalidReferenceError("Row number must be >= 1")
     if amount < 1:
-        raise InvalidReferenceError("Liczba wierszy musi byc >= 1")
+        raise InvalidReferenceError("Row count must be >= 1")
 
     return first, first + amount - 1
 
 
 def _column_number(column: Any) -> int:
-    """Przyjmuje ``"C"`` albo ``3`` i zwraca numer kolumny."""
+    """Accepts ``\"C\"`` or ``3`` and returns the column number."""
     if isinstance(column, int):
         if column < 1:
-            raise InvalidReferenceError("Numer kolumny musi byc >= 1")
+            raise InvalidReferenceError("Column number must be >= 1")
         return column
     text = str(column).strip()
     if text.isdigit():
@@ -1254,30 +1254,30 @@ def _column_number(column: Any) -> int:
 
 
 def _as_formula(value: Any) -> str:
-    """Zamienia wartosc progu na formule akceptowana przez FormatConditions."""
+    """Turns a threshold value into a formula FormatConditions accepts."""
     text = str(value)
     return text if text.startswith("=") else f"={text}"
 
 
 def _pivot_field(pivot: Any, field_name: Any) -> Any:
-    """Pole tabeli przestawnej z czytelnym bledem, gdy nazwa nie pasuje."""
+    """Pivot field with a clear error when the name does not match."""
     if not field_name:
-        raise InvalidReferenceError("Nazwa pola tabeli przestawnej nie moze byc pusta")
+        raise InvalidReferenceError("Pivot field name cannot be empty")
     try:
         return pivot.PivotFields(str(field_name))
     except com_error as exc:
         if is_connection_error(exc):
             raise
         raise InvalidReferenceError(
-            f"Tabela przestawna nie ma pola '{field_name}' - sprawdz naglowki zakresu"
+            f"The pivot table has no field '{field_name}' - check the range headers"
         ) from exc
 
 
 def _count_matches(target: Any, needle: str, look_at: int, match_case: bool) -> int:
-    """Liczy komorki pasujace do szukanego tekstu przed podmiana.
+    """Counts cells matching the search text before replacing.
 
-    ``Range.Replace`` zwraca tylko ``True``/``False``, wiec liczbe trafien
-    trzeba policzyc osobno przez ``Find``/``FindNext``.
+    ``Range.Replace`` only returns ``True``/``False``, so the number of hits
+    has to be counted separately via ``Find``/``FindNext``.
     """
     try:
         found = target.Find(

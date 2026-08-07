@@ -1,8 +1,8 @@
-"""Kontroler Worda - tresc, style, naglowki i obiekty osadzone przez COM.
+"""Word controller - text, styles, headings and embedded objects over COM.
 
-Akapity indeksuje sie od 1, tak jak w kolekcji ``Document.Paragraphs``.
-Nazwy stylow mozna podawac po angielsku (``"Heading 1"``, ``"Normal"``) nawet
-w polskiej wersji Worda - kontroler mapuje je na stale wbudowane.
+Paragraphs are indexed from 1, matching the ``Document.Paragraphs`` collection.
+Style names can be given in English (``"Heading 1"``, ``"Normal"``) even in a
+localised Word - the controller maps them onto built-in constants.
 """
 
 from __future__ import annotations
@@ -59,10 +59,10 @@ WD_LINE_SPACING_RULES: dict[float, int] = {
 }
 WD_LINE_SPACE_MULTIPLE = 5
 
-# Wylacznie klucze angielskie - to sa etykiety wbudowane Worda. Kazdy inny
-# tekst (np. "Rysunek") jest traktowany jako etykieta wlasna i trafia do
-# dokumentu doslownie, co jest jedynym sposobem na polskie podpisy niezaleznie
-# od jezyka, w jakim Word akurat nazywa swoje etykiety wbudowane.
+# English keys only - these are Word's built-in labels. Any other text is
+# treated as a custom label and goes into the document verbatim, which is the
+# only reliable way to get localised captions regardless of what Word happens
+# to call its built-in labels.
 WD_CAPTION_LABELS: dict[str, int] = {
     "figure": -1,
     "table": -2,
@@ -71,25 +71,23 @@ WD_CAPTION_LABELS: dict[str, int] = {
 
 WD_ORIENTATIONS: dict[str, int] = {
     "portrait": WD_ORIENT_PORTRAIT,
-    "pionowa": WD_ORIENT_PORTRAIT,
-    "landscape": WD_ORIENT_LANDSCAPE,
-    "pozioma": WD_ORIENT_LANDSCAPE,
-}
+        "landscape": WD_ORIENT_LANDSCAPE,
+    }
 
 
 class WordController(BaseController):
-    """Akcje ``doc_*`` - operacje na zywej instancji Worda."""
+    """``doc_*`` actions - operations on a live Word instance."""
 
     APP_KEY = "word"
     DISPLAY_NAME = "Word"
     ALERTS_OFF = 0
 
     def document(self) -> Any:
-        """Aktywny dokument albo czytelny blad, gdy nic nie jest otwarte."""
+        """The active document, or a clear error when nothing is open."""
         app = self.app
         if app.Documents.Count == 0:
             raise DocumentNotFoundError(
-                "Brak otwartego dokumentu - uzyj doc_create_document albo doc_open_document"
+                "No document open - use doc_create_document or doc_open_document"
             )
         try:
             return app.ActiveDocument
@@ -97,7 +95,7 @@ class WordController(BaseController):
             return app.Documents(app.Documents.Count)
 
     def paragraph(self, paragraph_index: Any) -> Any:
-        """Akapit o zadanym indeksie (1-based) z walidacja zakresu."""
+        """Paragraph at the given 1-based index, with range validation."""
         document = self.document()
         index = self.require_index(
             paragraph_index, document.Paragraphs.Count, "paragraph_index"
@@ -114,11 +112,11 @@ class WordController(BaseController):
 
     @staticmethod
     def _inside_paragraph_end(paragraph: Any) -> Any:
-        """Punkt wstawiania tuz przed znacznikiem konca akapitu.
+        """Insertion point just before the end-of-paragraph mark.
 
-        ``Range.Collapse(wdCollapseEnd)`` laduje *za* znacznikiem akapitu, czyli
-        juz w nastepnym akapicie - przypis albo hiperlacze wstawione w ten sposob
-        pojawia sie na poczatku kolejnego akapitu zamiast na koncu wskazanego.
+        ``Range.Collapse(wdCollapseEnd)`` lands *after* the paragraph mark, i.e.
+        already inside the next paragraph - a footnote or hyperlink inserted that
+        way shows up at the start of the following paragraph instead of the end
         """
         target = paragraph.Range
         end = int(target.End)
@@ -126,10 +124,10 @@ class WordController(BaseController):
         return target
 
     def _insert_point(self, document: Any, position: Any) -> Any:
-        """Miejsce wstawienia spisu: ``start``, ``end`` albo numer akapitu.
+        """Where to insert a table: ``start``, ``end`` or a paragraph number.
 
-        Praca dyplomowa potrzebuje spisu tresci *za* strona tytulowa, a nie na
-        samym poczatku pliku - stad mozliwosc wskazania konkretnego akapitu.
+        A thesis needs its table of contents *after* the title page, not at the
+        very start of the file - hence the option to point at a paragraph.
         """
         if isinstance(position, int) or str(position).strip().isdigit():
             index = self.require_index(
@@ -137,23 +135,23 @@ class WordController(BaseController):
             )
             return self._inside_paragraph_end(document.Paragraphs(index))
 
-        if str(position).strip().lower() in ("start", "poczatek"):
+        if str(position).strip().lower() in ("start", "begin"):
             return document.Range(0, 0)
         return self._end_range(document)
 
     def _end_range(self, document: Any) -> Any:
-        """Zakres ustawiony na sam koniec dokumentu."""
+        """A range collapsed to the very end of the document."""
         target = document.Content
         target.Collapse(WD_COLLAPSE_END)
         return target
 
     def _append_paragraph(self, document: Any, text: str) -> Any:
-        """Dopisuje akapit z tekstem na koncu dokumentu i zwraca go.
+        """Appends a paragraph with text at the end of the document and returns it.
 
-        Swiadomie nie uzywamy ``Paragraphs.Add`` ani przypisania do
-        ``Range.Text``: pierwsze wstawia akapit w miejscu zaznaczenia, a drugie
-        nadpisuje znak konca akapitu i skleja sasiednie akapity w jeden.
-        Pusty akapit na koncu dokumentu jest wykorzystywany ponownie.
+        We deliberately avoid ``Paragraphs.Add`` and assigning to ``Range.Text``:
+        the first inserts at the selection, the second overwrites the paragraph
+        mark and glues neighbouring paragraphs into one. An empty trailing
+        paragraph is reused instead of adding another.
         """
         content = document.Content
         content.Collapse(WD_COLLAPSE_END)
@@ -166,12 +164,12 @@ class WordController(BaseController):
 
     @staticmethod
     def _has_text(paragraph: Any) -> bool:
-        """Czy akapit zawiera cokolwiek poza znakami konca akapitu i komorki."""
+        """Whether a paragraph holds anything beyond paragraph and cell marks."""
         raw = str(paragraph.Range.Text)
         return bool(raw.replace("\r", "").replace("\x07", "").strip())
 
     def _apply_named_style(self, target: Any, style_name: str) -> str:
-        """Ustawia styl po nazwie lokalnej albo po stalej wbudowanej Worda."""
+        """Applies a style by local name or by Word's built-in constant."""
         wanted = str(style_name).strip()
 
         try:
@@ -184,7 +182,7 @@ class WordController(BaseController):
         builtin = WD_BUILTIN_STYLES.get(wanted.lower())
         if builtin is None:
             raise InvalidReferenceError(
-                f"Nieznany styl '{style_name}'. Uzyj nazwy z Worda albo jednej z: "
+                f"Unknown style '{style_name}'. Use a name from Word or one of: "
                 f"{', '.join(sorted(WD_BUILTIN_STYLES))}"
             )
 
@@ -192,13 +190,13 @@ class WordController(BaseController):
             target.Style = builtin
         except com_error as exc:
             raise InvalidReferenceError(
-                f"Nie udalo sie zastosowac stylu '{style_name}'"
+                f"Could not apply style '{style_name}'"
             ) from exc
         return wanted
 
     @action("create_document")
     def create_document(self, path: str, template: str | None = None) -> dict[str, Any]:
-        """Tworzy dokument (opcjonalnie z szablonu .dotx) i zapisuje go."""
+        """Creates a document (optionally from a .dotx template) and saves it."""
         target = self.resolve_target_path(path)
 
         if template:
@@ -214,7 +212,7 @@ class WordController(BaseController):
 
     @action("open_document")
     def open_document(self, path: str) -> dict[str, Any]:
-        """Otwiera plik albo aktywuje go, jesli jest juz otwarty."""
+        """Opens the file, or activates it if it is already open."""
         target = self.resolve_existing_path(path)
         app = self.app
 
@@ -232,7 +230,7 @@ class WordController(BaseController):
 
     @action("save")
     def save(self, path: str | None = None) -> dict[str, Any]:
-        """Zapisuje dokument albo zapisuje go jako nowy plik."""
+        """Saves the document, or saves it as a new file."""
         document = self.document()
 
         if path:
@@ -244,7 +242,7 @@ class WordController(BaseController):
                 )
         elif not document.Path:
             raise InvalidReferenceError(
-                "Dokument nie ma jeszcze pliku - podaj parametr path"
+                "The document has no file yet - pass the path parameter"
             )
         else:
             document.Save()
@@ -253,14 +251,14 @@ class WordController(BaseController):
 
     @action("close")
     def close(self, save: bool = True) -> dict[str, Any]:
-        """Zamyka dokument, opcjonalnie zapisujac zmiany."""
+        """Closes the document, optionally saving changes."""
         document = self.document()
         name = str(document.Name)
 
         if save:
             if not document.Path:
                 raise InvalidReferenceError(
-                    "Dokument nie byl zapisany - najpierw doc_save z parametrem path"
+                    "The document was never saved - run doc_save with a path first"
                 )
             document.Save()
 
@@ -271,7 +269,7 @@ class WordController(BaseController):
 
     @action("get_document_info")
     def get_document_info(self) -> dict[str, Any]:
-        """Metadane dokumentu: liczba stron i slow, szablon, sciezka."""
+        """Document metadata: page and word counts, template, path."""
         document = self.document()
         info = self._document_summary(document)
 
@@ -299,7 +297,7 @@ class WordController(BaseController):
 
     @action("get_full_text")
     def get_full_text(self) -> dict[str, Any]:
-        """Zwraca caly tekst dokumentu (akapity rozdzielone znakiem nowej linii)."""
+        """Returns the whole document text (paragraphs separated by newlines)."""
         document = self.document()
         text = str(document.Content.Text).replace("\r\x07", "\n").replace("\r", "\n")
 
@@ -342,7 +340,7 @@ class WordController(BaseController):
 
     @action("add_paragraph")
     def add_paragraph(self, text: str, style: str | None = None) -> dict[str, Any]:
-        """Dopisuje akapit na koncu dokumentu, opcjonalnie z wybranym stylem."""
+        """Appends a paragraph at the end of the document, optionally styled."""
         document = self.document()
         paragraph = self._append_paragraph(document, text)
 
@@ -358,14 +356,14 @@ class WordController(BaseController):
 
     @action("add_heading")
     def add_heading(self, text: str, level: int = 1) -> dict[str, Any]:
-        """Dopisuje naglowek poziomu 1-9."""
+        """Appends a level 1-9 heading."""
         try:
             heading_level = int(level)
         except (TypeError, ValueError) as exc:
-            raise InvalidReferenceError("Poziom naglowka musi byc liczba 1-9") from exc
+            raise InvalidReferenceError("Heading level must be a number 1-9") from exc
 
         if not 1 <= heading_level <= 9:
-            raise InvalidReferenceError("Poziom naglowka musi miescic sie w zakresie 1-9")
+            raise InvalidReferenceError("Heading level must be within 1-9")
 
         result = self.add_paragraph(text, style=f"Heading {heading_level}")
         result["level"] = heading_level
@@ -373,7 +371,7 @@ class WordController(BaseController):
 
     @action("insert_page_break")
     def insert_page_break(self) -> dict[str, Any]:
-        """Wstawia twardy podzial strony na koncu dokumentu."""
+        """Inserts a hard page break at the end of the document."""
         document = self.document()
         self._end_range(document).InsertBreak(WD_PAGE_BREAK)
         return {"paragraph_count": int(document.Paragraphs.Count)}
@@ -382,17 +380,17 @@ class WordController(BaseController):
     def find_replace(
         self, old_text: str, new_text: str, match_case: bool = False
     ) -> dict[str, Any]:
-        """Podmienia tekst w calym dokumencie i zwraca liczbe trafien.
+        """Replaces text across the document and returns the number of hits.
 
-        Wszystkie parametry wyszukiwania ida w jednym wywolaniu ``Execute`` -
-        ustawianie ich jako wlasciwosci obiektu ``Find`` przy poznym wiazaniu
-        COM zwraca sukces, ale nie podmienia tekstu.
+        All search parameters go in a single ``Execute`` call - setting them as
+        properties on the ``Find`` object under late-bound COM reports success
+        but does not replace anything.
 
-        Przy ``match_case=False`` Word dopasowuje wielkosc liter wstawianego
-        tekstu do znalezionego (tak samo jak okno Znajdz i zamien).
+        With ``match_case=False`` Word matches the case of the inserted text to
+        the text it found (same as the Find and Replace dialog).
         """
         if not old_text:
-            raise InvalidReferenceError("Parametr old_text nie moze byc pusty")
+            raise InvalidReferenceError("Parameter old_text cannot be empty")
 
         document = self.document()
         content = str(document.Content.Text)
@@ -427,17 +425,17 @@ class WordController(BaseController):
 
     @action("add_bullet_list")
     def add_bullet_list(self, items: list[Any]) -> dict[str, Any]:
-        """Dodaje liste punktowana (obsluguje poziomy zagniezdzenia)."""
+        """Adds a bulleted list (supports nesting levels)."""
         return self._add_list(items, numbered=False)
 
     @action("add_numbered_list")
     def add_numbered_list(self, items: list[Any]) -> dict[str, Any]:
-        """Dodaje liste numerowana (obsluguje poziomy zagniezdzenia)."""
+        """Adds a numbered list (supports nesting levels)."""
         return self._add_list(items, numbered=True)
 
     def _add_list(self, items: list[Any], numbered: bool) -> dict[str, Any]:
         if not isinstance(items, list) or not items:
-            raise InvalidReferenceError("Lista 'items' nie moze byc pusta")
+            raise InvalidReferenceError("List 'items' cannot be empty")
 
         document = self.document()
         entries = []
@@ -451,11 +449,11 @@ class WordController(BaseController):
                 text, level = str(item), 1
             entries.append((text, max(1, min(level, 9))))
 
-        # Trzymamy numery akapitow, a nie obiekty COM. Kazde kolejne
+        # We keep paragraph numbers, not COM objects. Every further
         # InsertParagraphAfter przestawia wczesniej pobrane obiekty Paragraph,
-        # przez co zakres liczony z ich Range obejmowal tylko ostatnia pozycje -
-        # numerowana byla wtedy jedna pozycja zamiast calej listy, a nastepna
-        # lista doklejala sie do poprzedniej.
+        # so a range computed from their Range covered only the last entry -
+        # one item got numbered instead of the whole list, and the next list
+        # was glued onto the previous one.
         first_index = None
         levels: list[tuple[int, int]] = []
         for text, level in entries:
@@ -473,9 +471,9 @@ class WordController(BaseController):
 
         nested = any(level > 1 for _, level in levels)
         if nested:
-            # Listy domyslne (ApplyNumberDefault/ApplyBulletDefault) sa
-            # jednopoziomowe - proba zejscia nizej konczy sie bledem OLE
-            # 0x800a1200. Poziomy daje dopiero szablon z galerii.
+            # Default lists (ApplyNumberDefault/ApplyBulletDefault) are
+            # single-level - trying to go deeper fails with OLE error
+            # 0x800a1200. Levels only work with a gallery template.
             gallery = WD_OUTLINE_NUMBER_GALLERY if numbered else WD_BULLET_GALLERY
             list_range.ListFormat.ApplyListTemplateWithLevel(
                 ListTemplate=self.app.ListGalleries(gallery).ListTemplates(1),
@@ -513,7 +511,7 @@ class WordController(BaseController):
         italic: bool | None = None,
         underline: bool | None = None,
     ) -> dict[str, Any]:
-        """Formatuje czcionke calego akapitu."""
+        """Formats the font of a whole paragraph."""
         paragraph = self.paragraph(paragraph_index)
         font = paragraph.Range.Font
         applied: dict[str, Any] = {}
@@ -543,11 +541,11 @@ class WordController(BaseController):
     def set_paragraph_alignment(
         self, paragraph_index: int, alignment: str
     ) -> dict[str, Any]:
-        """Ustawia wyrownanie akapitu: left / center / right / justify."""
+        """Sets paragraph alignment: left / center / right / justify."""
         key = str(alignment).strip().lower()
         if key not in WD_ALIGNMENTS:
             raise InvalidReferenceError(
-                f"Nieznane wyrownanie '{alignment}'. Dostepne: "
+                f"Unknown alignment '{alignment}'. Available: "
                 f"{', '.join(sorted(WD_ALIGNMENTS))}"
             )
 
@@ -571,7 +569,7 @@ class WordController(BaseController):
         right: float,
         unit: str = "pt",
     ) -> dict[str, Any]:
-        """Ustawia marginesy strony; ``unit`` pozwala podac cm, mm, cale lub punkty."""
+        """Sets page margins; ``unit`` accepts cm, mm, inches or points."""
         document = self.document()
         setup = document.PageSetup
 
@@ -599,19 +597,19 @@ class WordController(BaseController):
         unit: str = "pt",
         own_paragraph: bool = True,
     ) -> dict[str, Any]:
-        """Wstawia obraz w tekscie (``inline``) albo jako obiekt plywajacy (``float``).
+        """Inserts an image inline (``inline``) or as a floating object (``float``).
 
-        ``width`` i ``height`` sa domyslnie w punktach, tak jak reszta wymiarow
-        w COM - ``unit="cm"`` pozwala podac rozmiar po ludzku.
+        ``width`` and ``height`` default to points, like every other COM
+        dimension - ``unit=\"cm\"`` lets you give a human-sized value.
         """
         target_path = self.resolve_existing_path(image_path)
         document = self.document()
         mode = str(position).strip().lower()
 
-        if mode in ("inline", "w_tekscie"):
+        if mode in ("inline", "inline_text"):
             if own_paragraph:
-                # Bez wlasnego akapitu obraz dokleja sie do ostatniego zdania,
-                # ktore justowanie rozciaga wtedy na cala szerokosc strony.
+                # Without its own paragraph the image is glued onto the last
+                # sentence, which justification then stretches across the page.
                 self._append_paragraph(document, "")
             shape = document.InlineShapes.AddPicture(
                 FileName=target_path,
@@ -619,7 +617,7 @@ class WordController(BaseController):
                 SaveWithDocument=True,
                 Range=self._end_range(document),
             )
-        elif mode in ("float", "floating", "plywajacy"):
+        elif mode in ("float", "floating", "floating_object"):
             shape = document.Shapes.AddPicture(
                 FileName=target_path,
                 LinkToFile=False,
@@ -629,7 +627,7 @@ class WordController(BaseController):
             )
         else:
             raise InvalidReferenceError(
-                f"Nieznana pozycja obrazu '{position}' - uzyj 'inline' albo 'float'"
+                f"Unknown image position '{position}' - use 'inline' or 'float'"
             )
 
         if width is not None:
@@ -659,7 +657,7 @@ class WordController(BaseController):
         widow_control: bool | None,
         unit: str,
     ) -> dict[str, Any]:
-        """Ustawia pola ``ParagraphFormat`` na akapicie albo na stylu."""
+        """Sets ``ParagraphFormat`` fields on a paragraph or on a style."""
         applied: dict[str, Any] = {}
 
         if line_spacing is not None:
@@ -667,7 +665,7 @@ class WordController(BaseController):
             rule = WD_LINE_SPACING_RULES.get(value)
             if rule is None:
                 # Poza 1.0 / 1.5 / 2.0 Word oczekuje reguly "wielokrotnosc"
-                # i interlinii podanej w punktach, gdzie jeden wiersz = 12 pt.
+                # and line spacing given in points, where one line = 12 pt.
                 target.LineSpacingRule = WD_LINE_SPACE_MULTIPLE
                 target.LineSpacing = value * POINTS_PER_LINE
             else:
@@ -721,10 +719,10 @@ class WordController(BaseController):
     ) -> dict[str, Any]:
         """Interlinia, wciecia i lamanie akapitow - podstawa skladu pracy dyplomowej.
 
-        Zasieg wybiera sie jednym z trzech sposobow: ``style`` zmienia definicje
-        stylu (np. cala tresc naraz przez ``"Normal"``), ``paragraph_index``
-        z ``count`` obejmuje konkretne akapity, a brak obu - wszystkie akapity
-        dokumentu albo, przy ``body_text_only=True``, tylko tekst zwykly
+        Scope is chosen one of three ways: ``style`` changes a style definition
+        (e.g. all body text at once through ``"Normal"``), ``paragraph_index``
+        with ``count`` covers specific paragraphs, and neither means every
+        paragraph in the document or, with ``body_text_only=True``, only body
         z pominieciem naglowkow.
         """
         if all(
@@ -735,7 +733,7 @@ class WordController(BaseController):
                 page_break_before, widow_control,
             )
         ):
-            raise InvalidReferenceError("Nie podano zadnego pola do zmiany")
+            raise InvalidReferenceError("No field given to change")
 
         document = self.document()
 
@@ -780,7 +778,7 @@ class WordController(BaseController):
         }
 
     def _resolve_style(self, document: Any, style: Any) -> Any:
-        """Obiekt stylu po nazwie lokalnej, angielskiej albo stalej wbudowanej."""
+        """Style object by local name, English name or built-in constant."""
         if isinstance(style, int):
             return document.Styles(style)
 
@@ -793,7 +791,7 @@ class WordController(BaseController):
         builtin = WD_BUILTIN_STYLES.get(wanted.lower())
         if builtin is None:
             raise InvalidReferenceError(
-                f"Nieznany styl '{style}'. Uzyj nazwy z Worda albo jednej z: "
+                f"Unknown style '{style}'. Use a name from Word or one of: "
                 f"{', '.join(sorted(WD_BUILTIN_STYLES))}"
             )
         return document.Styles(builtin)
@@ -804,11 +802,11 @@ class WordController(BaseController):
     ) -> dict[str, Any]:
         """Wlacza numeracje rozdzialow 1., 1.1, 1.1.1 powiazana ze stylami naglowkow.
 
-        Schemat budowany jest recznie, poziom po poziomie, zamiast brania gotowca
-        z galerii - szablony galerii roznia sie miedzy instalacjami i potrafia
+        The scheme is built by hand, level by level, instead of taking a gallery
+        preset - gallery templates differ between installations and can produce
         dac numeracje prawnicza ("Artykul I.", "Sekcja 2.01").
 
-        Numerowane sa wylacznie akapity o stylu naglowkowym; tekst zwykly
+        Only paragraphs with a heading style get numbered; body text is left
         pozostaje nietkniety.
         """
         document = self.document()
@@ -827,7 +825,7 @@ class WordController(BaseController):
         for level in range(1, depth + 1):
             list_level = template.ListLevels(level)
             list_level.NumberStyle = WD_LIST_NUMBER_ARABIC
-            # "%1." dla rozdzialu, "%1.%2" dla podrozdzialu i tak dalej.
+            # "%1." for a chapter, "%1.%2" for a section, and so on.
             list_level.NumberFormat = ".".join(
                 f"%{position}" for position in range(1, level + 1)
             ) + ("." if level == 1 else "")
@@ -864,14 +862,14 @@ class WordController(BaseController):
         label: str = "figure",
         above: bool = False,
     ) -> dict[str, Any]:
-        """Dodaje numerowany podpis przy wskazanym akapicie.
+        """Adds a numbered caption next to the given paragraph.
 
         ``label`` przyjmuje etykiete wbudowana (``figure``, ``table``,
-        ``equation``) albo dowolny wlasny tekst, np. ``"Rysunek"`` - wlasna
-        etykieta jest w razie potrzeby dopisywana do slownika Worda.
+        ``equation``) or any custom text, e.g. ``"Figure"`` - a custom label is
+        added to Word's label list when needed.
 
-        Numeracja jest polem Worda, wiec przy wstawianiu kolejnych podpisow
-        wczesniejsze same sie przenumeruja - po zmianach warto wywolac
+        Numbering is a Word field, so inserting further captions renumbers the
+        earlier ones - after changes it is worth calling
         ``doc_update_fields``.
         """
         document = self.document()
@@ -879,9 +877,9 @@ class WordController(BaseController):
         index = self.require_index(paragraph_index, total, "paragraph_index")
 
         # Etykieta wbudowana ("figure") idzie jako stala - Word sam dobiera
-        # jej brzmienie, ktore zalezy od jezyka dokumentu i potrafi byc raz
-        # "Rysunek", raz "Figure". Kazdy inny tekst traktujemy jak etykiete
-        # wlasna i w razie potrzeby dopisujemy ja do slownika Worda, dzieki
+        # its wording, which depends on the document language and can be
+        # "Figure" one time and something else another. Any other text is
+        # treated as a custom label and added to Word's label list, so
         # czemu praca po polsku dostaje "Rysunek" niezaleznie od ustawien.
         key = str(label).strip().lower()
         if key in WD_CAPTION_LABELS:
@@ -918,14 +916,14 @@ class WordController(BaseController):
     def insert_table_of_figures(
         self, label: str = "figure", position: Any = "end"
     ) -> dict[str, Any]:
-        """Wstawia spis rysunkow albo tabel zbudowany z podpisow.
+        """Inserts a table of figures or tables built from captions.
 
-        ``position`` jak w spisie tresci: ``start``, ``end`` albo numer akapitu.
+        ``position`` as in the table of contents: ``start``, ``end`` or a number.
         """
         document = self.document()
-        # Spis buduje sie po nazwie etykiety, wiec dla wbudowanej trzeba ja
+        # The table is built by label name, so for a built-in one we first have
         # najpierw odczytac z Worda, a wlasna ("Rysunek") bierzemy doslownie -
-        # tak samo jak w add_caption, zeby oba narzedzia widzialy te sama liste.
+        # exactly as in add_caption, so both tools see the same list.
         key = str(label).strip().lower()
         if key in WD_CAPTION_LABELS:
             caption_name = to_python(self.app.CaptionLabels(WD_CAPTION_LABELS[key]).Name)
@@ -946,8 +944,8 @@ class WordController(BaseController):
     def update_fields(self) -> dict[str, Any]:
         """Odswieza pola: spis tresci, spisy rysunkow, numeracje podpisow.
 
-        Spis tresci wstawiony przed napisaniem rozdzialow jest pusty do czasu
-        odswiezenia - bez tego kroku dokument wyglada na uszkodzony.
+        A table of contents inserted before the chapters are written stays empty
+        until refreshed - without this step the document looks broken.
         """
         document = self.document()
         document.Fields.Update()
@@ -977,15 +975,15 @@ class WordController(BaseController):
     ) -> dict[str, Any]:
         """Orientacja, margines na oprawe i marginesy lustrzane - druk dwustronny.
 
-        ``gutter`` to dodatkowy zapas przy krawedzi zszycia, a
+        ``gutter`` is the extra room at the binding edge, and
         ``mirror_margins`` przenosi go na przemian raz w lewo, raz w prawo,
-        tak jak w oprawionej pracy dyplomowej.
+        as in a bound thesis.
         """
         if all(
             value is None
             for value in (orientation, gutter, mirror_margins, different_first_page)
         ):
-            raise InvalidReferenceError("Nie podano zadnego pola do zmiany")
+            raise InvalidReferenceError("No field given to change")
 
         document = self.document()
         if section is None:
@@ -1017,10 +1015,10 @@ class WordController(BaseController):
 
     @action("export_pdf")
     def export_pdf(self, path: str, open_after: bool = False) -> dict[str, Any]:
-        """Eksportuje dokument do PDF-u bez zmiany biezacego pliku.
+        """Exports the document to PDF without changing the current file.
 
         Word - w odroznieniu od PowerPointa - wystawia ``ExportAsFixedFormat``
-        w formie wywolywalnej przez pywin32, wiec nie trzeba tego obchodzic.
+        in a form pywin32 can call, so no workaround is needed.
         """
         document = self.document()
         target = self.resolve_target_path(path)
@@ -1036,7 +1034,7 @@ class WordController(BaseController):
 
     @action("get_paragraph")
     def get_paragraph(self, paragraph_index: int, count: int = 1) -> dict[str, Any]:
-        """Czyta akapity wraz ze stylem i wyrownaniem - bez zgadywania po tekscie."""
+        """Reads paragraphs with style and alignment - no guessing from text."""
         document = self.document()
         total = int(document.Paragraphs.Count)
         first = self.require_index(paragraph_index, total, "paragraph_index")
@@ -1068,7 +1066,7 @@ class WordController(BaseController):
 
     @action("delete_paragraph")
     def delete_paragraph(self, paragraph_index: int, count: int = 1) -> dict[str, Any]:
-        """Usuwa akapit (albo kilka kolejnych) - dokument nie jest juz tylko do dopisywania."""
+        """Deletes a paragraph (or several) - the document is no longer append-only."""
         document = self.document()
         total = int(document.Paragraphs.Count)
         first = self.require_index(paragraph_index, total, "paragraph_index")
@@ -1096,10 +1094,10 @@ class WordController(BaseController):
         after: bool = False,
         style: str | None = None,
     ) -> dict[str, Any]:
-        """Wstawia akapit w konkretnym miejscu, a nie tylko na koncu dokumentu.
+        """Inserts a paragraph at a specific place, not just at the end.
 
-        Bez ``paragraph_index`` zachowuje sie jak ``add_paragraph``. Z indeksem
-        wstawia przed wskazanym akapitem, a przy ``after=True`` - za nim.
+        Without ``paragraph_index`` it behaves like ``add_paragraph``. With an
+        index it inserts before the given paragraph, or after it with ``after=True``.
         """
         document = self.document()
 
@@ -1141,9 +1139,9 @@ class WordController(BaseController):
         paragraph_index: int | None = None,
         tooltip: str | None = None,
     ) -> dict[str, Any]:
-        """Wstawia hiperlacze; bez ``paragraph_index`` dopisuje je na koncu."""
+        """Inserts a hyperlink; without ``paragraph_index`` it appends at the end."""
         if not url:
-            raise InvalidReferenceError("'url' nie moze byc puste")
+            raise InvalidReferenceError("'url' cannot be empty")
 
         document = self.document()
         if paragraph_index is None:
@@ -1169,7 +1167,7 @@ class WordController(BaseController):
 
     @action("add_footnote")
     def add_footnote(self, paragraph_index: int, text: str) -> dict[str, Any]:
-        """Dodaje przypis dolny na koncu wskazanego akapitu."""
+        """Adds a footnote at the end of the given paragraph."""
         document = self.document()
         total = int(document.Paragraphs.Count)
         index = self.require_index(paragraph_index, total, "paragraph_index")
@@ -1212,7 +1210,7 @@ class WordController(BaseController):
     def set_columns(
         self, count: int = 1, section: int = 1, spacing: float | None = None
     ) -> dict[str, Any]:
-        """Ustawia liczbe kolumn tekstu w sekcji (uklad gazetowy)."""
+        """Sets the number of text columns in a section (newspaper layout)."""
         document = self.document()
         index = self.require_index(section, int(document.Sections.Count), "section")
         columns = document.Sections(index).PageSetup.TextColumns
@@ -1231,7 +1229,7 @@ class WordController(BaseController):
     def set_default_font(
         self, name: str | None = None, size: float | None = None
     ) -> dict[str, Any]:
-        """Zmienia czcionke stylu Normalny - podstawa calego dokumentu."""
+        """Changes the Normal style font - the basis of the whole document."""
         if not name and size is None:
             raise InvalidReferenceError("Podaj 'name', 'size' albo oba")
 
@@ -1259,17 +1257,17 @@ class WordController(BaseController):
         column_widths: list[float] | None = None,
         autofit: bool | None = None,
     ) -> dict[str, Any]:
-        """Formatuje wstawiona tabele - styl, obramowanie, naglowek, szerokosci.
+        """Formats an inserted table - style, borders, header, widths.
 
-        ``style`` przyjmuje nazwy niezalezne od jezyka (``light_grid``,
+        ``style`` takes language-independent names (``light_grid``,
         ``medium_shading1``, ``colorful_list``...), bo wbudowane style tabel
-        Word tlumaczy i przypisanie po nazwie po angielsku konczy sie bledem
-        "element o podanej nazwie nie istnieje".
+        Word translates built-in table style names, so assigning the English
+        name fails with "the given name does not exist".
         """
         document = self.document()
         total = int(document.Tables.Count)
         if not total:
-            raise InvalidReferenceError("Dokument nie zawiera tabel")
+            raise InvalidReferenceError("The document contains no tables")
 
         index = self.require_index(table_index, total, "table_index")
         table = document.Tables(index)
@@ -1315,10 +1313,10 @@ class WordController(BaseController):
         position: int | None = None,
         header_bold: bool = True,
     ) -> dict[str, Any]:
-        """Wstawia tabele na koncu dokumentu albo po wskazanym akapicie."""
+        """Inserts a table at the end of the document or after a given paragraph."""
         row_count, column_count = int(rows), int(cols)
         if row_count < 1 or column_count < 1:
-            raise InvalidReferenceError("Tabela musi miec co najmniej 1 wiersz i 1 kolumne")
+            raise InvalidReferenceError("A table needs at least 1 row and 1 column")
 
         document = self.document()
 
@@ -1361,7 +1359,7 @@ class WordController(BaseController):
 
     @action("insert_header")
     def insert_header(self, text: str, section: int = 1) -> dict[str, Any]:
-        """Ustawia tekst naglowka strony w wybranej sekcji."""
+        """Sets the page header text in the chosen section."""
         document = self.document()
         index = self.require_index(section, document.Sections.Count, "section")
         header = document.Sections(index).Headers(WD_HEADER_FOOTER_PRIMARY)
@@ -1370,7 +1368,7 @@ class WordController(BaseController):
 
     @action("insert_footer")
     def insert_footer(self, text: str, section: int = 1) -> dict[str, Any]:
-        """Ustawia tekst stopki w wybranej sekcji."""
+        """Sets the footer text in the chosen section."""
         document = self.document()
         index = self.require_index(section, document.Sections.Count, "section")
         footer = document.Sections(index).Footers(WD_HEADER_FOOTER_PRIMARY)
@@ -1381,11 +1379,11 @@ class WordController(BaseController):
     def add_page_numbers(
         self, alignment: str = "center", first_page: bool = True, section: int = 1
     ) -> dict[str, Any]:
-        """Wstawia numery stron w stopce."""
+        """Inserts page numbers into the footer."""
         key = str(alignment).strip().lower()
         if key not in WD_ALIGNMENTS:
             raise InvalidReferenceError(
-                f"Nieznane wyrownanie '{alignment}'. Dostepne: "
+                f"Unknown alignment '{alignment}'. Available: "
                 f"{', '.join(sorted(WD_ALIGNMENTS))}"
             )
 
@@ -1402,9 +1400,9 @@ class WordController(BaseController):
     def insert_table_of_contents(
         self, levels: int = 3, position: Any = "start"
     ) -> dict[str, Any]:
-        """Wstawia spis tresci zbudowany ze stylow naglowkow.
+        """Inserts a table of contents built from heading styles.
 
-        ``position`` przyjmuje ``start``, ``end`` albo numer akapitu - ten
+        ``position`` accepts ``start``, ``end`` or a paragraph number - the last
         ostatni pozwala umiescic spis za strona tytulowa.
         """
         depth = max(1, min(int(levels), 9))
@@ -1424,8 +1422,8 @@ class WordController(BaseController):
             if is_connection_error(exc):
                 raise
             raise UnsupportedOperationError(
-                "Nie udalo sie wstawic spisu tresci - dokument musi zawierac "
-                "akapity ze stylami naglowkow"
+                "Could not insert the table of contents - the document must "
+                "contain paragraphs with heading styles"
             ) from exc
 
         return {"levels": depth, "position": str(position).lower()}
