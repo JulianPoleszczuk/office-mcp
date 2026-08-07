@@ -102,6 +102,11 @@ class TestDispatch:
             "add_animation",
             "list_animations",
             "set_transition",
+            "delete_shape",
+            "set_shape_position",
+            "set_shape_order",
+            "export_slide",
+            "export_pdf",
         ):
             assert name in actions
 
@@ -673,6 +678,138 @@ class TestErrorMapping:
 
         with pytest.raises(InvalidReferenceError):
             controller.dispatch("delete_slide", {"slide_index": 1})
+
+
+class TestShapeEditing:
+    def test_delete_shape_by_id(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        target = slides[0].Shapes(1)
+
+        result = controller.dispatch(
+            "delete_shape", {"slide_index": 1, "shape_id": 5}
+        )
+
+        target.Delete.assert_called_once()
+        assert result["shape_id"] == 5
+
+    def test_delete_unknown_shape_is_invalid_reference(self, powerpoint):
+        controller, *_ = powerpoint
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch("delete_shape", {"slide_index": 1, "shape_id": 999})
+
+    def test_set_shape_position_applies_only_given_fields(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = slides[0].Shapes(1)
+
+        controller.dispatch(
+            "set_shape_position",
+            {"slide_index": 1, "shape_id": 5, "left": 100, "rotation": 15},
+        )
+
+        assert shape.Left == 100.0
+        assert shape.Top == 20.0  # nietkniete
+        assert shape.Rotation == 15.0
+
+    def test_set_shape_position_unlocks_aspect_ratio_for_both_sizes(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = slides[0].Shapes(1)
+        shape.LockAspectRatio = -1
+
+        controller.dispatch(
+            "set_shape_position",
+            {"slide_index": 1, "shape_id": 5, "width": 400, "height": 120},
+        )
+
+        assert shape.Width == 400.0
+        assert shape.Height == 120.0
+        assert shape.LockAspectRatio == -1  # blokada przywrocona
+
+    def test_set_shape_position_without_any_field_is_rejected(self, powerpoint):
+        controller, *_ = powerpoint
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch("set_shape_position", {"slide_index": 1, "shape_id": 5})
+
+    def test_set_shape_order_maps_names_to_mso_constants(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = slides[0].Shapes(1)
+
+        for order, expected in (
+            ("front", 0),
+            ("back", 1),
+            ("forward", 2),
+            ("backward", 3),
+        ):
+            controller.dispatch(
+                "set_shape_order", {"slide_index": 1, "shape_id": 5, "order": order}
+            )
+            assert shape.ZOrder.call_args[0][0] == expected
+
+    def test_unknown_order_is_invalid_reference(self, powerpoint):
+        controller, *_ = powerpoint
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "set_shape_order", {"slide_index": 1, "shape_id": 5, "order": "wyzej"}
+            )
+
+
+class TestExport:
+    def test_export_slide_derives_height_from_slide_ratio(self, powerpoint, tmp_path):
+        controller, _app, _presentation, slides = powerpoint
+        target = tmp_path / "slajd.png"
+
+        result = controller.dispatch(
+            "export_slide", {"slide_index": 1, "path": str(target)}
+        )
+
+        slides[0].Export.assert_called_once_with(str(target), "PNG", 1920, 1080)
+        assert (result["width"], result["height"]) == (1920, 1080)
+        assert result["format"] == "PNG"
+
+    def test_export_slide_honours_explicit_width(self, powerpoint, tmp_path):
+        controller, _app, _presentation, slides = powerpoint
+        target = tmp_path / "slajd.jpg"
+
+        controller.dispatch(
+            "export_slide", {"slide_index": 1, "path": str(target), "width": 800}
+        )
+
+        slides[0].Export.assert_called_once_with(str(target), "JPG", 800, 450)
+
+    def test_export_slide_rejects_unknown_extension(self, powerpoint, tmp_path):
+        controller, *_ = powerpoint
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "export_slide",
+                {"slide_index": 1, "path": str(tmp_path / "slajd.svg")},
+            )
+
+    def test_export_pdf_saves_copy_without_repointing_presentation(
+        self, powerpoint, tmp_path
+    ):
+        controller, _app, presentation, _slides = powerpoint
+        target = tmp_path / "deck.pdf"
+
+        result = controller.dispatch("export_pdf", {"path": str(target)})
+
+        presentation.SaveCopyAs.assert_called_once_with(str(target), 32, -1)
+        presentation.SaveAs.assert_not_called()
+        assert result["embed_fonts"] is True
+
+    def test_export_pdf_without_embedded_fonts(self, powerpoint, tmp_path):
+        controller, _app, presentation, _slides = powerpoint
+
+        controller.dispatch(
+            "export_pdf", {"path": str(tmp_path / "d.pdf"), "embed_fonts": False}
+        )
+
+        assert presentation.SaveCopyAs.call_args[0][2] == 0
+
+    def test_export_pdf_to_missing_directory_is_document_error(self, powerpoint):
+        controller, *_ = powerpoint
+        with pytest.raises(DocumentNotFoundError):
+            controller.dispatch(
+                "export_pdf", {"path": r"C:\nie\ma\takiego\katalogu\deck.pdf"}
+            )
 
 
 class TestAnimations:

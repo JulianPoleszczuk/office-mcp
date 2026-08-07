@@ -243,6 +243,27 @@ PP_TRANSITIONS: dict[str, int] = {
     "morph_by_char": 3956,
 }
 
+PP_EXPORT_FILTERS: dict[str, str] = {
+    ".png": "PNG",
+    ".jpg": "JPG",
+    ".jpeg": "JPG",
+    ".gif": "GIF",
+    ".bmp": "BMP",
+    ".wmf": "WMF",
+    ".emf": "EMF",
+}
+
+MSO_ZORDER: dict[str, int] = {
+    "front": 0,
+    "bring_to_front": 0,
+    "back": 1,
+    "send_to_back": 1,
+    "forward": 2,
+    "bring_forward": 2,
+    "backward": 3,
+    "send_backward": 3,
+}
+
 MSO_ANIM_EFFECTS: dict[str, int] = {
     "appear": 1,
     "fly": 2,

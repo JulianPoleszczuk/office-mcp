@@ -5,11 +5,12 @@ Serwer MCP, który pozwala Claude'owi sterować **otwartymi** aplikacjami Micros
 promptem, a zmiany widać na żywo w oknie aplikacji — bez pośredniego generowania plików i
 otwierania ich ręcznie.
 
-- 75 narzędzi MCP: `ppt_*` (27), `xl_*` (25), `doc_*` (23)
+- 80 narzędzi MCP: `ppt_*` (32), `xl_*` (25), `doc_*` (23)
 - pełny cykl: tworzenie, odczyt istniejących dokumentów, edycja, formatowanie, wykresy, obrazy, tabele,
   animacje i przejścia slajdów
+- eksport slajdu do PNG — model może obejrzeć własny slajd i poprawić układ zamiast pracować w ciemno
 - podłącza się do już uruchomionej instancji Office zamiast otwierać drugą
-- 226 testów jednostkowych i integracyjnych działających bez zainstalowanego Office
+- 239 testów jednostkowych i integracyjnych działających bez zainstalowanego Office
 
 ## Architektura
 
@@ -174,6 +175,11 @@ Wszystkie narzędzia zwracają JSON w jednym formacie:
 | `ppt_add_chart(slide_index, chart_type, categories, series_data, ...)` | Wykres z danymi |
 | `ppt_add_table(slide_index, rows, cols, data, left, top, width, height)` | Tabela |
 | `ppt_add_shape(slide_index, shape_type, left, top, width, height, ...)` | Kształt |
+| `ppt_delete_shape(slide_index, shape_id)` | Usuwa kształt ze slajdu |
+| `ppt_set_shape_position(slide_index, shape_id, left, top, width, height, rotation)` | Przesuwa, skaluje i obraca istniejący kształt |
+| `ppt_set_shape_order(slide_index, shape_id, order)` | Warstwa kształtu: `front`, `back`, `forward`, `backward` |
+| `ppt_export_slide(slide_index, path, width=None, height=None)` | Slajd jako obraz (PNG/JPG/GIF/BMP/WMF/EMF) |
+| `ppt_export_pdf(path, embed_fonts=True)` | Cała prezentacja do PDF-u, bez ruszania otwartego pliku |
 | `ppt_add_animation(slide_index, shape_id, effect, trigger, level, duration, delay, exit_effect)` | Animacja kształtu w sekwencji głównej slajdu |
 | `ppt_list_animations(slide_index)` | Animacje slajdu w kolejności odtwarzania + jego przejście |
 | `ppt_set_transition(effect, slide_index=None, duration, advance_on_click, advance_after)` | Przejście slajdu; bez `slide_index` całej prezentacji |
@@ -186,6 +192,18 @@ Kształty: `rectangle`, `rounded_rectangle`, `oval`, `triangle`, `diamond`, `sta
 przyjmują `"none"`, żeby wyłączyć wypełnienie albo obrys z motywu.
 
 Współrzędne podaje się w punktach: slajd 16:9 ma 960 × 540 pt, 1 cm = 28,35 pt.
+
+#### Pętla zwrotna
+
+`ppt_export_slide` zapisuje slajd jako obraz, dzięki czemu model może **zobaczyć**, co
+zbudował, i poprawić układ — bez tego wstawia kształty w ciemno i nie wie, że stopka
+nachodzi na panel albo że tekst łamie się w złym miejscu. Bez podanych wymiarów obraz ma
+1920 px szerokości, a wysokość liczy się z proporcji slajdu.
+
+```
+ppt_add_textbox(...)  →  ppt_export_slide(1, "podglad.png")  →  obejrzyj
+                      →  ppt_set_shape_position(1, 42, top=496)  →  eksportuj ponownie
+```
 
 #### Animacje i przejścia
 
@@ -312,7 +330,7 @@ Przykładowa odpowiedź błędu narzędzia MCP:
 python -m pytest -q
 ```
 
-226 testów, wszystkie bez zainstalowanego Office:
+239 testów, wszystkie bez zainstalowanego Office:
 
 - `tests/test_bridge_protocol.py` — kodowanie/dekodowanie protokołu oraz test integracyjny
   serwera TCP (prawdziwy socket, atrapa kontrolera),
@@ -346,8 +364,14 @@ Scenariusze do ręcznego testu na żywym Office: `examples/example_prompts.md`.
 - **Wykres wstawia się w stylu motywu** i nie ma narzędzia do formatowania serii, osi ani tła
   wykresu — na slajdzie o własnej kolorystyce trzeba go poprawić ręcznie albo zbudować
   prosty wykres słupkowy z `ppt_add_shape`.
-- **Nie ma usuwania pojedynczych kształtów** (`ppt_delete_shape`) — pomyłkę naprawia się
-  usunięciem całego slajdu albo ręcznie w PowerPoincie.
+- **Eksport do PDF idzie przez `SaveCopyAs`, nie `ExportAsFixedFormat`.** Ta druga metoda jest
+  niewywoływalna przez pywin32 — wygenerowany wrapper podstawia `PyOleEmpty` pod parametr
+  `ExternalExporter` i każde wywołanie kończy się `TypeError: The Python instance can not be
+  converted to a COM object`, niezależnie od wiązania. Skutek uboczny: nie da się wybrać
+  jakości ekran/druk ani zakresu slajdów.
+- **Bridge nie przeładowuje kodu.** Żyje między restartami klienta MCP (to jest jego sens), więc
+  po zmianie kontrolera trzeba go ubić — inaczej nowe akcje zwracają
+  `ProtocolError: Nieznana akcja`.
 - Bridge nasłuchuje wyłącznie na localhost i nie ma uwierzytelniania — nie należy wystawiać
   jego portu na zewnątrz.
 

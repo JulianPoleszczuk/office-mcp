@@ -16,6 +16,8 @@ from bridge.utils.com_helpers import (
     MSO_ANIM_EFFECTS,
     MSO_ANIM_LEVELS,
     MSO_ANIM_TRIGGERS,
+    MSO_ZORDER,
+    PP_EXPORT_FILTERS,
     PP_LAYOUTS,
     PP_SAVE_FORMATS,
     PP_TRANSITIONS,
@@ -963,6 +965,169 @@ class PowerPointController(BaseController):
             "shape_type": shape_type,
         }
 
+
+    @action("delete_shape")
+    def delete_shape(self, slide_index: int, shape_id: Any) -> dict[str, Any]:
+        """Usuwa ksztalt ze slajdu - po id albo nazwie."""
+        slide = self.slide(slide_index)
+        shape = self._resolve_shape(slide, shape_id)
+        removed = {"shape_id": int(shape.Id), "shape_name": to_python(shape.Name)}
+        shape.Delete()
+
+        self._goto_slide(int(slide_index))
+        return {
+            "slide_index": int(slide_index),
+            **removed,
+            "shapes_left": int(slide.Shapes.Count),
+        }
+
+    @action("set_shape_position")
+    def set_shape_position(
+        self,
+        slide_index: int,
+        shape_id: Any,
+        left: float | None = None,
+        top: float | None = None,
+        width: float | None = None,
+        height: float | None = None,
+        rotation: float | None = None,
+    ) -> dict[str, Any]:
+        """Przesuwa, skaluje i obraca istniejacy ksztalt (podane pola, w punktach)."""
+        if all(value is None for value in (left, top, width, height, rotation)):
+            raise InvalidReferenceError(
+                "Podaj przynajmniej jedno z: left, top, width, height, rotation"
+            )
+
+        slide = self.slide(slide_index)
+        shape = self._resolve_shape(slide, shape_id)
+
+        # Przy zablokowanych proporcjach ustawienie szerokosci zmienia takze
+        # wysokosc - zdejmujemy blokade, gdy podano oba wymiary naraz.
+        previous_lock: Any = None
+        if width is not None and height is not None:
+            try:
+                previous_lock = shape.LockAspectRatio
+                shape.LockAspectRatio = MSO_FALSE
+            except com_error:
+                previous_lock = None
+
+        try:
+            if left is not None:
+                shape.Left = float(left)
+            if top is not None:
+                shape.Top = float(top)
+            if width is not None:
+                shape.Width = float(width)
+            if height is not None:
+                shape.Height = float(height)
+            if rotation is not None:
+                shape.Rotation = float(rotation)
+        finally:
+            if previous_lock is not None:
+                try:
+                    shape.LockAspectRatio = previous_lock
+                except com_error:
+                    pass
+
+        self._goto_slide(int(slide_index))
+        return {
+            "slide_index": int(slide_index),
+            "shape_id": int(shape.Id),
+            "left": round(float(shape.Left), 2),
+            "top": round(float(shape.Top), 2),
+            "width": round(float(shape.Width), 2),
+            "height": round(float(shape.Height), 2),
+            "rotation": round(float(shape.Rotation), 2),
+        }
+
+    @action("set_shape_order")
+    def set_shape_order(
+        self, slide_index: int, shape_id: Any, order: str = "front"
+    ) -> dict[str, Any]:
+        """Zmienia warstwe ksztaltu: front, back, forward albo backward."""
+        slide = self.slide(slide_index)
+        shape = self._resolve_shape(slide, shape_id)
+        shape.ZOrder(lookup_constant(order, MSO_ZORDER, "order"))
+
+        self._goto_slide(int(slide_index))
+        return {
+            "slide_index": int(slide_index),
+            "shape_id": int(shape.Id),
+            "order": order,
+            "z_order_position": int(shape.ZOrderPosition),
+            "shapes_on_slide": int(slide.Shapes.Count),
+        }
+
+    @action("export_slide")
+    def export_slide(
+        self,
+        slide_index: int,
+        path: str,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> dict[str, Any]:
+        """Zapisuje slajd jako obraz (PNG/JPG/GIF/BMP/WMF/EMF wg rozszerzenia).
+
+        Bez ``width``/``height`` obraz ma 1920 px szerokosci i wysokosc
+        wyliczona z proporcji slajdu.
+        """
+        slide = self.slide(slide_index)
+        target = self.resolve_target_path(path)
+
+        extension = os.path.splitext(target)[1].lower()
+        if extension not in PP_EXPORT_FILTERS:
+            raise InvalidReferenceError(
+                f"Nieobslugiwane rozszerzenie obrazu: {extension or '(brak)'}. "
+                f"Dostepne: {', '.join(sorted(PP_EXPORT_FILTERS))}"
+            )
+
+        setup = self.presentation().PageSetup
+        ratio = float(setup.SlideHeight) / float(setup.SlideWidth)
+        if width is None and height is None:
+            width = 1920
+            height = int(round(width * ratio))
+        elif height is None:
+            height = int(round(int(width) * ratio))
+        elif width is None:
+            width = int(round(int(height) / ratio))
+
+        slide.Export(target, PP_EXPORT_FILTERS[extension], int(width), int(height))
+
+        return {
+            "slide_index": int(slide_index),
+            "path": target,
+            "format": PP_EXPORT_FILTERS[extension],
+            "width": int(width),
+            "height": int(height),
+            "size_bytes": os.path.getsize(target) if os.path.isfile(target) else None,
+        }
+
+    @action("export_pdf")
+    def export_pdf(self, path: str, embed_fonts: bool = True) -> dict[str, Any]:
+        """Eksportuje cala prezentacje do PDF-u bez zmiany biezacego pliku.
+
+        Uzywa ``SaveCopyAs``, a nie ``ExportAsFixedFormat`` - ta druga metoda
+        jest niewywolywalna przez pywin32 (wrapper podstawia ``PyOleEmpty`` pod
+        parametr ``ExternalExporter``, czego nie da sie przekonwertowac na COM).
+        ``SaveAs`` odpada, bo przepialoby prezentacje otwarta w PowerPoincie
+        na plik PDF.
+        """
+        presentation = self.presentation()
+        target = self.resolve_target_path(path)
+
+        with self.alerts_suppressed():
+            presentation.SaveCopyAs(
+                target,
+                PP_SAVE_FORMATS[".pdf"],
+                MSO_TRUE if embed_fonts else MSO_FALSE,
+            )
+
+        return {
+            "path": target,
+            "slide_count": int(presentation.Slides.Count),
+            "embed_fonts": bool(embed_fonts),
+            "size_bytes": os.path.getsize(target) if os.path.isfile(target) else None,
+        }
 
     def _resolve_shape(self, slide: Any, shape_id: Any) -> Any:
         """Ksztalt po id/nazwie, ale rozumie tez ``title`` i ``content``."""

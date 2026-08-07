@@ -596,6 +596,84 @@ def ppt_add_shape(
 
 
 @server.tool()
+def ppt_delete_shape(slide_index: int, shape_id: Any) -> dict[str, Any]:
+    """Usuwa ksztalt ze slajdu; 'shape_id' to id, nazwa ksztaltu albo skrot
+    'title'/'content'."""
+    return call_bridge(
+        "powerpoint",
+        "delete_shape",
+        {"slide_index": slide_index, "shape_id": shape_id},
+    )
+
+
+@server.tool()
+def ppt_set_shape_position(
+    slide_index: int,
+    shape_id: Any,
+    left: float | None = None,
+    top: float | None = None,
+    width: float | None = None,
+    height: float | None = None,
+    rotation: float | None = None,
+) -> dict[str, Any]:
+    """Przesuwa, skaluje i obraca istniejacy ksztalt. Wspolrzedne w punktach
+    (slajd 16:9 = 960 x 540 pt), 'rotation' w stopniach. Podaje sie tylko te
+    pola, ktore maja sie zmienic."""
+    return call_bridge(
+        "powerpoint",
+        "set_shape_position",
+        {
+            "slide_index": slide_index,
+            "shape_id": shape_id,
+            "left": left,
+            "top": top,
+            "width": width,
+            "height": height,
+            "rotation": rotation,
+        },
+    )
+
+
+@server.tool()
+def ppt_set_shape_order(
+    slide_index: int, shape_id: Any, order: str = "front"
+) -> dict[str, Any]:
+    """Zmienia warstwe ksztaltu: front (na wierzch), back (na spod),
+    forward (krok w gore), backward (krok w dol)."""
+    return call_bridge(
+        "powerpoint",
+        "set_shape_order",
+        {"slide_index": slide_index, "shape_id": shape_id, "order": order},
+    )
+
+
+@server.tool()
+def ppt_export_slide(
+    slide_index: int,
+    path: str,
+    width: int | None = None,
+    height: int | None = None,
+) -> dict[str, Any]:
+    """Zapisuje slajd jako obraz - format wynika z rozszerzenia pliku
+    (.png, .jpg, .gif, .bmp, .wmf, .emf). Bez podanych wymiarow obraz ma
+    1920 px szerokosci. Sluzy do obejrzenia efektu i poprawienia ukladu."""
+    return call_bridge(
+        "powerpoint",
+        "export_slide",
+        {"slide_index": slide_index, "path": path, "width": width, "height": height},
+    )
+
+
+@server.tool()
+def ppt_export_pdf(path: str, embed_fonts: bool = True) -> dict[str, Any]:
+    """Eksportuje cala prezentacje do PDF-u; nie zmienia pliku otwartego
+    w PowerPoincie."""
+    return call_bridge(
+        "powerpoint", "export_pdf", {"path": path, "embed_fonts": embed_fonts}
+    )
+
+
+@server.tool()
 def ppt_add_animation(
     slide_index: int,
     shape_id: Any,
