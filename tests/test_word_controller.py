@@ -651,6 +651,31 @@ class TestWordExtras:
             == "https://openai.com"
         )
 
+    def test_footnote_anchors_before_paragraph_mark(self, word):
+        controller, _app, document = word
+        paragraph = make_paragraph("Tekst akapitu\r", start=100, end=115)
+        document.Paragraphs = com_collection([paragraph])
+
+        controller.dispatch(
+            "add_footnote", {"paragraph_index": 1, "text": "Przypis"}
+        )
+
+        # Collapse(wdCollapseEnd) wyladowalby na 115, czyli juz w nastepnym
+        # akapicie - odnosnik pojawilby sie przed jego pierwszym slowem.
+        paragraph.Range.SetRange.assert_called_once_with(114, 114)
+        assert document.Footnotes.Add.call_args.kwargs["Text"] == "Przypis"
+
+    def test_hyperlink_in_paragraph_anchors_before_mark(self, word):
+        controller, _app, document = word
+        paragraph = make_paragraph("Tekst\r", start=10, end=17)
+        document.Paragraphs = com_collection([paragraph])
+
+        controller.dispatch(
+            "add_hyperlink", {"url": "https://openai.com", "paragraph_index": 1}
+        )
+
+        paragraph.Range.SetRange.assert_called_once_with(16, 16)
+
     def test_hyperlink_requires_url(self, word):
         controller, *_ = word
         with pytest.raises(InvalidReferenceError):

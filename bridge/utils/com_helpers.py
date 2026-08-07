@@ -790,6 +790,8 @@ def apply_chart_format(
     data_labels: bool | None = None,
     gridlines: bool | None = None,
     title: str | None = None,
+    value_axis_min: float | None = None,
+    value_axis_max: float | None = None,
 ) -> dict[str, Any]:
     """Formatuje wykres - wspolne dla PowerPointa i Excela.
 
@@ -804,9 +806,20 @@ def apply_chart_format(
             if position > series_count:
                 break
             series = chart.SeriesCollection(position)
-            series.Format.Fill.Visible = MSO_TRUE
-            series.Format.Fill.Solid()
-            series.Format.Fill.ForeColor.RGB = parse_color(color)
+            rgb = parse_color(color)
+            # Serie slupkowe i kolowe biora kolor z wypelnienia, ale liniowe
+            # i punktowe z obrysu - ustawiamy oba, bo inaczej wykres liniowy
+            # zostaje w domyslnym kolorze motywu mimo "sukcesu" wywolania.
+            try:
+                series.Format.Fill.Visible = MSO_TRUE
+                series.Format.Fill.Solid()
+                series.Format.Fill.ForeColor.RGB = rgb
+            except com_error:
+                pass
+            try:
+                series.Format.Line.ForeColor.RGB = rgb
+            except com_error:
+                pass
         applied["series_colored"] = min(len(series_colors), series_count)
 
     if background is not None:
@@ -854,6 +867,21 @@ def apply_chart_format(
             applied["gridlines"] = bool(gridlines)
         except com_error:
             applied["gridlines"] = None
+
+    # Office dobiera zakres osi automatycznie i przy zblizonych wartosciach
+    # potrafi zaczac ja daleko od zera - roznica 522 vs 478 wyglada wtedy
+    # jak dwukrotna. Jawny zakres jest jedynym sposobem, zeby to naprostowac.
+    if value_axis_min is not None or value_axis_max is not None:
+        try:
+            axis = chart.Axes(XL_VALUE_AXIS)
+            if value_axis_min is not None:
+                axis.MinimumScale = float(value_axis_min)
+                applied["value_axis_min"] = float(value_axis_min)
+            if value_axis_max is not None:
+                axis.MaximumScale = float(value_axis_max)
+                applied["value_axis_max"] = float(value_axis_max)
+        except com_error:
+            applied["value_axis"] = None
 
     if text_color is not None:
         rgb = parse_color(text_color)

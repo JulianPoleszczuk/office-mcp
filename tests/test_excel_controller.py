@@ -899,6 +899,9 @@ class TestExcelExport:
         controller, _app, _workbook, worksheet = excel
         target = tmp_path / "zakres.png"
         chart_object = worksheet.ChartObjects.return_value.Add.return_value
+        chart_object.Chart.Export.side_effect = lambda path, _fmt: (
+            open(path, "wb").write(b"PNG")
+        )
 
         controller.dispatch(
             "export_range_image",
@@ -906,6 +909,23 @@ class TestExcelExport:
         )
 
         chart_object.Chart.Export.assert_called_once_with(str(target), "PNG")
+        chart_object.Delete.assert_called_once()
+
+    def test_range_image_rejects_empty_output(self, excel, tmp_path):
+        controller, _app, _workbook, worksheet = excel
+        target = tmp_path / "pusty.png"
+        chart_object = worksheet.ChartObjects.return_value.Add.return_value
+        # Excel potrafi "zapisac" plik zerowej dlugosci i nie zglosic bledu.
+        chart_object.Chart.Export.side_effect = lambda path, _fmt: (
+            open(path, "wb").close()
+        )
+
+        with pytest.raises(UnsupportedOperationError):
+            controller.dispatch(
+                "export_range_image",
+                {"sheet": "Budzet", "range_ref": "A1:B2", "path": str(target)},
+            )
+
         chart_object.Delete.assert_called_once()
 
     def test_format_chart_without_charts_is_rejected(self, excel):

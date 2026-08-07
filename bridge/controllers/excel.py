@@ -765,6 +765,7 @@ class ExcelController(BaseController):
                 "Dostepne: .png, .jpg, .jpeg, .gif"
             )
 
+        self._activate(worksheet)
         target.CopyPicture(XL_SCREEN, XL_BITMAP)
         chart_object = worksheet.ChartObjects().Add(
             0, 0, float(target.Width) + 8, float(target.Height) + 8
@@ -783,6 +784,14 @@ class ExcelController(BaseController):
                 self.app.CutCopyMode = False
             except com_error:
                 pass
+
+        # Chart.Export potrafi zwrocic sukces i zostawic plik zerowej dlugosci,
+        # gdy arkusz nie byl aktywny albo bitmapa nie zdazyla trafic do schowka.
+        if not os.path.isfile(target_path) or os.path.getsize(target_path) == 0:
+            raise UnsupportedOperationError(
+                "Excel zapisal pusty obraz zakresu - sprobuj ponownie po "
+                "aktywowaniu arkusza; przy zajetym schowku eksport bywa zawodny"
+            )
 
         self._activate(worksheet)
         return {
@@ -806,6 +815,8 @@ class ExcelController(BaseController):
         data_labels: bool | None = None,
         gridlines: bool | None = None,
         title: str | None = None,
+        value_axis_min: float | None = None,
+        value_axis_max: float | None = None,
     ) -> dict[str, Any]:
         """Dostraja wykres w arkuszu - odpowiednik ``ppt_format_chart``."""
         worksheet = self.worksheet(sheet)
@@ -837,6 +848,8 @@ class ExcelController(BaseController):
             data_labels=data_labels,
             gridlines=gridlines,
             title=title,
+            value_axis_min=value_axis_min,
+            value_axis_max=value_axis_max,
         )
 
         self._activate(worksheet)

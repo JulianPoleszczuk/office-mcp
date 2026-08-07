@@ -978,6 +978,8 @@ def ppt_format_chart(
     data_labels: bool | None = None,
     gridlines: bool | None = None,
     title: str | None = None,
+    value_axis_min: float | None = None,
+    value_axis_max: float | None = None,
 ) -> dict[str, Any]:
     """Dostraja wykres do kolorystyki slajdu: kolory serii, kolor tekstu osi
     i legendy, tlo ('none' = przezroczyste), pozycja legendy
@@ -995,6 +997,8 @@ def ppt_format_chart(
             "data_labels": data_labels,
             "gridlines": gridlines,
             "title": title,
+            "value_axis_min": value_axis_min,
+            "value_axis_max": value_axis_max,
         },
     )
 
@@ -1448,6 +1452,8 @@ def xl_format_chart(
     data_labels: bool | None = None,
     gridlines: bool | None = None,
     title: str | None = None,
+    value_axis_min: float | None = None,
+    value_axis_max: float | None = None,
 ) -> dict[str, Any]:
     """Dostraja wykres w arkuszu: kolory serii, kolor tekstu osi i legendy,
     tlo ('none' = przezroczyste), pozycja legendy, etykiety, siatka, tytul.
@@ -1465,6 +1471,8 @@ def xl_format_chart(
             "data_labels": data_labels,
             "gridlines": gridlines,
             "title": title,
+            "value_axis_min": value_axis_min,
+            "value_axis_max": value_axis_max,
         },
     )
 

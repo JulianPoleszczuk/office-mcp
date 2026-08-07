@@ -79,6 +79,19 @@ class WordController(BaseController):
             "saved": bool(document.Saved),
         }
 
+    @staticmethod
+    def _inside_paragraph_end(paragraph: Any) -> Any:
+        """Punkt wstawiania tuz przed znacznikiem konca akapitu.
+
+        ``Range.Collapse(wdCollapseEnd)`` laduje *za* znacznikiem akapitu, czyli
+        juz w nastepnym akapicie - przypis albo hiperlacze wstawione w ten sposob
+        pojawia sie na poczatku kolejnego akapitu zamiast na koncu wskazanego.
+        """
+        target = paragraph.Range
+        end = int(target.End)
+        target.SetRange(max(int(target.Start), end - 1), max(int(target.Start), end - 1))
+        return target
+
     def _end_range(self, document: Any) -> Any:
         """Zakres ustawiony na sam koniec dokumentu."""
         target = document.Content
@@ -688,8 +701,7 @@ class WordController(BaseController):
         else:
             total = int(document.Paragraphs.Count)
             index = self.require_index(paragraph_index, total, "paragraph_index")
-            anchor = document.Paragraphs(index).Range
-            anchor.Collapse(WD_COLLAPSE_END)
+            anchor = self._inside_paragraph_end(document.Paragraphs(index))
 
         link = document.Hyperlinks.Add(
             Anchor=anchor,
@@ -712,8 +724,7 @@ class WordController(BaseController):
         total = int(document.Paragraphs.Count)
         index = self.require_index(paragraph_index, total, "paragraph_index")
 
-        anchor = document.Paragraphs(index).Range
-        anchor.Collapse(WD_COLLAPSE_END)
+        anchor = self._inside_paragraph_end(document.Paragraphs(index))
         footnote = document.Footnotes.Add(Range=anchor, Text=str(text))
 
         return {

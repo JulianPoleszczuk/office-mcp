@@ -1687,6 +1687,8 @@ class PowerPointController(BaseController):
         data_labels: bool | None = None,
         gridlines: bool | None = None,
         title: str | None = None,
+        value_axis_min: float | None = None,
+        value_axis_max: float | None = None,
     ) -> dict[str, Any]:
         """Dostraja wykres do kolorystyki slajdu.
 
@@ -1711,6 +1713,8 @@ class PowerPointController(BaseController):
             data_labels=data_labels,
             gridlines=gridlines,
             title=title,
+            value_axis_min=value_axis_min,
+            value_axis_max=value_axis_max,
         )
 
         self._goto_slide(int(slide_index))

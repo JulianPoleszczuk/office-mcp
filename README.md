@@ -12,7 +12,7 @@ otwierania ich ręcznie.
   model widzi, co zbudował, zamiast pracować w ciemno
 - styl jako jeden byt: paleta i czcionki motywu, tło na wzorcu — zamiast powtarzania hexów przy każdym kształcie
 - podłącza się do już uruchomionej instancji Office zamiast otwierać drugą
-- 347 testów jednostkowych i integracyjnych działających bez zainstalowanego Office
+- 350 testów jednostkowych i integracyjnych działających bez zainstalowanego Office
 
 ## Architektura
 
@@ -424,7 +424,7 @@ Przykładowa odpowiedź błędu narzędzia MCP:
 python -m pytest -q
 ```
 
-347 testów, wszystkie bez zainstalowanego Office:
+350 testów, wszystkie bez zainstalowanego Office:
 
 - `tests/test_bridge_protocol.py` — kodowanie/dekodowanie protokołu oraz test integracyjny
   serwera TCP (prawdziwy socket, atrapa kontrolera),
@@ -463,6 +463,19 @@ Scenariusze do ręcznego testu na żywym Office: `examples/example_prompts.md`.
   `ExternalExporter` i każde wywołanie kończy się `TypeError: The Python instance can not be
   converted to a COM object`, niezależnie od wiązania. Skutek uboczny: nie da się wybrać
   jakości ekran/druk ani zakresu slajdów.
+- **Wykres liniowy bierze kolor z obrysu, nie z wypełnienia.** `series_colors` ustawia oba,
+  bo `Format.Fill` działa na słupkach i kołowych, a `Format.Line` na liniowych i punktowych —
+  ustawienie samego wypełnienia kończy się „sukcesem" przy niezmienionym kolorze linii.
+- **Office sam dobiera zakres osi wartości** i przy zbliżonych słupkach potrafi zacząć ją daleko
+  od zera — różnica 486 vs 514 wygląda wtedy jak dwukrotna. `value_axis_min` / `value_axis_max`
+  w `xl_format_chart` i `ppt_format_chart` pozwalają to naprostować.
+- **`Chart.Export` w Excelu potrafi zapisać plik zerowej długości** i nie zgłosić błędu, gdy
+  arkusz nie był aktywny albo schowek był zajęty. `xl_export_range_image` sprawdza rozmiar
+  wynikowego pliku i zamienia takie ciche niepowodzenie na czytelny błąd.
+- **`Range.Collapse(wdCollapseEnd)` w Wordzie ląduje za znacznikiem akapitu**, czyli już
+  w następnym. Przypis albo hiperłącze wstawione w ten sposób pojawia się przed pierwszym
+  słowem kolejnego akapitu — `doc_add_footnote` i `doc_add_hyperlink` kotwiczą się przed
+  znacznikiem, a nie za nim.
 - **Parametry `Range.Sort` w Excelu są „lepkie".** Excel pamięta `Orientation`, `MatchCase`
   i `SortMethod` z poprzedniego sortowania w sesji. Pominięcie `Orientation` potrafi posortować
   zakres lewo-prawo i poprzestawiać kolumny zamiast wierszy — `xl_sort_range` podaje
