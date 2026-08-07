@@ -1,187 +1,142 @@
-# Przykładowe polecenia (test end-to-end na żywym Office 2019)
+# Example prompts
 
-Scenariusze do ręcznego sprawdzenia w Claude Desktop / Claude Code z podłączonym `office-mcp`.
-Każdy opisuje, co wpisać, jakich narzędzi model powinien użyć i co należy zobaczyć w oknie Office.
+Scenarios to run by hand against live Office. Each one exercises a group of
+tools end to end. Ask Claude in plain language, the way you normally would.
 
-Przed startem: `office_status` powinien zwrócić `"ok": true` dla Bridge. Ścieżki w przykładach
-warto podmienić na własne.
+Before you start, make sure the MCP server is registered and that Office is
+installed. You do not need to open anything first.
 
----
+## PowerPoint
 
-## 1. Prezentacja od zera z wykresem
+**A short deck with a consistent look**
 
-> Stwórz prezentację o robotyce sumo w `C:\Users\ja\Documents\sumo.pptx`, 5 slajdów:
-> tytułowy, zasady, budowa robota, wyniki z wykresem słupkowym (Robot A – 5 wygranych,
-> Robot B – 3, Robot C – 8) i podsumowanie. Do slajdu z zasadami dodaj listę punktowaną.
+> Build a 3 slide deck about the history of ChatGPT. Set a dark theme with a
+> green accent, put the background on the master so it applies to every slide,
+> and add entrance animations plus transitions. Save it to my desktop.
 
-Narzędzia: `ppt_create_presentation`, `ppt_add_slide`, `ppt_set_title`, `ppt_add_bullet_list`,
-`ppt_add_chart`, `ppt_save`.
-Sprawdź: 5 slajdów, wykres z podpisanymi seriami, punkty na slajdzie 2.
+Covers: `ppt_create_presentation`, `ppt_set_theme_colors`,
+`ppt_set_master_background`, `ppt_add_slide`, `ppt_add_textbox`,
+`ppt_add_shape`, `ppt_add_animation`, `ppt_set_transition`, `ppt_save`.
 
----
+**Check your own layout**
 
-## 2. Edycja istniejącej prezentacji
+> Export slide 2 to a PNG and look at it. If anything overlaps or the spacing
+> looks wrong, fix it and export again.
 
-> Otwórz `C:\prezentacje\raport_q3.pptx`, wypisz tytuły slajdów, a potem na slajdzie 3
-> zmień tytuł na „Wyniki Q3 2026” i dodaj notatkę prelegenta z trzema zdaniami komentarza.
+Covers: `ppt_export_slide`, `ppt_get_slide_content`, `ppt_set_shape_position`,
+`ppt_delete_shape`.
 
-Narzędzia: `ppt_open_presentation`, `ppt_list_slides`, `ppt_set_title`, `ppt_set_speaker_notes`.
-Sprawdź: model najpierw odczytuje strukturę, dopiero potem edytuje; okno przewija się na slajd 3.
+**Charts that match the slide**
 
----
+> Add a column chart with our quarterly numbers, then restyle it to the deck
+> colours: green bars, muted axis text, transparent background, no legend, and
+> start the value axis at zero.
 
-## 3. Podmiana tekstu w całej prezentacji
+Covers: `ppt_add_chart`, `ppt_format_chart`.
 
-> W otwartej prezentacji zamień wszystkie wystąpienia „2025” na „2026”, także w tabelach,
-> i powiedz ile zmian zrobiłeś.
+**Diagrams and structure**
 
-Narzędzia: `ppt_find_replace_text`.
-Sprawdź: `replacements` zgadza się z liczbą wystąpień, tabele też zostały zaktualizowane.
+> Show me the SmartArt process layouts, then add a three step diagram to slide 2.
+> Group the cards on slide 1 and align them to the top.
 
----
+Covers: `ppt_list_smartart_layouts`, `ppt_add_smartart`, `ppt_group_shapes`,
+`ppt_align_shapes`, `ppt_distribute_shapes`.
 
-## 4. Slajd składany ręcznie z obiektów
+**Navigation and sections**
 
-> Na nowym pustym slajdzie ułóż: pole tekstowe „Harmonogram” u góry (32 pt, pogrubione),
-> tabelę 3×2 z etapami projektu po lewej, a po prawej zaokrąglony prostokąt w kolorze
-> `#0070C0` z napisem „Start: marzec”.
+> Add a button on slide 1 that jumps to slide 3, split the deck into two
+> sections, and put slide numbers in the footer.
 
-Narzędzia: `ppt_add_slide(layout="blank")`, `ppt_add_textbox`, `ppt_add_table`, `ppt_add_shape`.
-Sprawdź: elementy nie nachodzą na siebie (slajd 16:9 to 960 × 540 pt).
+Covers: `ppt_add_hyperlink`, `ppt_add_section`, `ppt_list_sections`,
+`ppt_set_headers_footers`.
 
----
+## Excel
 
-## 5. Motyw, tło i formatowanie
+**A simulation with a summary**
 
-> Ustaw tło slajdu 1 na `#F2F2F2`, tytuł zmień na 40 pt w kolorze granatowym,
-> a slajdowi 2 nadaj układ „Porównanie”.
+> Simulate 1000 coin flips in Excel. Freeze the random values so they stop
+> changing, add running totals and frequency columns, and build a summary block
+> with the count of heads, the frequency, the standard error and the longest run.
 
-Narzędzia: `ppt_get_slide_content` (po `shape_id`), `ppt_set_background`, `ppt_set_text_style`,
-`ppt_set_slide_layout`.
-Sprawdź: model najpierw pobiera `shape_id` z zawartości slajdu, zamiast go zgadywać.
+Covers: `xl_create_workbook`, `xl_set_range`, `xl_copy_range` with
+`paste="values"`, `xl_set_formula`, `xl_set_cell_format`, `xl_freeze_panes`.
 
----
+Note the freeze step. `RANDBETWEEN` is volatile and recalculates on every sheet
+change, so without copying the values in place the numbers in a report will not
+match the sheet.
 
-## 6. Arkusz budżetu z formatowaniem warunkowym
+**Look at the formatting**
 
-> W arkuszu `budzet.xlsx` dodaj kolumnę „Suma” z formułą sumującą wiersz,
-> pogrub nagłówki, ustaw format walutowy na kwotach i pokoloruj na czerwono
-> wszystkie komórki większe niż 1000.
+> Export the summary block as an image so I can see how it looks.
 
-Narzędzia: `xl_open_workbook`, `xl_get_used_range`, `xl_set_formula`, `xl_set_cell_format`,
+Covers: `xl_export_range_image`.
+
+**Cleaning up data**
+
+> Sort the table by year, turn on the AutoFilter, add a dropdown in the status
+> column with the allowed values, and colour the values column with a colour
+> scale.
+
+Covers: `xl_sort_range`, `xl_set_autofilter`, `xl_add_data_validation`,
 `xl_apply_conditional_formatting`.
-Sprawdź: reguła `cell_value` z operatorem `greater` i progiem 1000; format liczb w kolumnie kwot.
 
----
+**Reading back**
 
-## 7. Wklejenie całej tabeli danych naraz
+> Show me the formulas in column E, not the results.
 
-> Stwórz skoroszyt `C:\dane\wyniki.xlsx` z arkuszem „Zawody” i wstaw dane:
-> nagłówki Robot / Kategoria / Punkty oraz pięć wierszy wyników. Zablokuj pierwszy wiersz
-> i dopasuj szerokość kolumn.
+Covers: `xl_get_cell_formula`, `xl_get_used_range`.
 
-Narzędzia: `xl_create_workbook`, `xl_rename_sheet`, `xl_set_range`, `xl_freeze_panes`,
-`xl_set_column_width`.
-Sprawdź: dane wchodzą jednym wywołaniem `xl_set_range`, a nie komórka po komórce.
+## Word
 
----
+**A short report**
 
-## 8. Wykres i tabela Excela
+> Write a two page report on the coin flip simulation. Pull the numbers from the
+> spreadsheet rather than retyping them. Include a results table and a footnote
+> about the random number generator.
 
-> Z danych w `A1:C6` arkusza „Zawody” zrób wykres kolumnowy zatytułowany „Punkty robotów”
-> obok danych, a sam zakres zamień w tabelę o nazwie „Wyniki”.
+Covers: `doc_create_document`, `doc_add_heading`, `doc_add_paragraph`,
+`doc_insert_table`, `doc_format_table`, `doc_add_footnote`,
+`doc_get_document_info`.
 
-Narzędzia: `xl_add_chart`, `xl_create_table`.
-Sprawdź: wykres nie zasłania danych, tabela ma filtry w nagłówkach.
+**A thesis skeleton**
 
----
+> Set this document up like a master's thesis: Times New Roman 12, line spacing
+> 1.5, justified text, first line indent, mirror margins with a binding gutter.
+> Add a title page, numbered chapters, and a table of contents after the title
+> page.
 
-## 9. Tabela przestawna
+Covers: `doc_set_default_font`, `doc_set_page_margins`, `doc_set_page_setup`,
+`doc_set_paragraph_format`, `doc_set_heading_numbering`,
+`doc_insert_table_of_contents`, `doc_update_fields`.
 
-> W `budzet.xlsx` zbuduj na nowym arkuszu tabelę przestawną z zakresu `A1:D200`:
-> w wierszach kategorie, w kolumnach miesiące, wartości to suma kwot.
+Remember `doc_update_fields`. A table of contents inserted before the chapters
+exist stays empty until it is refreshed.
 
-Narzędzia: `xl_add_sheet`, `xl_add_pivot_table`.
-Sprawdź: nazwy pól muszą pokrywać się z nagłówkami zakresu źródłowego — inaczej wraca
-`InvalidReferenceError` z czytelnym komunikatem.
+**Figures and captions**
 
----
+> Insert the chart image at 13 cm wide, caption it as Figure 1, and add a table
+> of figures at the end.
 
-## 10. Odczyt i analiza danych
+Covers: `doc_insert_image` with `unit="cm"`, `doc_add_caption`,
+`doc_insert_table_of_figures`.
 
-> Odczytaj zakres `A1:D50` z arkusza „Sprzedaz”, powiedz który miesiąc miał najwyższą sprzedaż
-> i wpisz ten wynik do komórki F1 razem z opisem.
+**Editing, not just appending**
 
-Narzędzia: `xl_get_range_values`, `xl_set_cell`.
-Sprawdź: model analizuje zwrócone dane po swojej stronie, a wynik ląduje w arkuszu.
+> Read paragraphs 1 to 10 with their styles, delete the third one, and insert a
+> new paragraph before the second.
 
----
+Covers: `doc_get_paragraph`, `doc_delete_paragraph`, `doc_insert_paragraph`.
 
-## 11. Raport w Wordzie od zera
+## Across apps
 
-> Stwórz dokument `C:\raporty\zawody.docx`: nagłówek 1 „Raport z zawodów”, akapit wstępu,
-> nagłówek 2 „Wyniki” z listą numerowaną trzech pierwszych miejsc, tabelę 3×2 z punktacją,
-> stopkę z numerami stron i spis treści na początku.
+> Read the results from the spreadsheet, write them up in Word, and put the same
+> numbers on a slide. Export all three to PDF when you are done.
 
-Narzędzia: `doc_create_document`, `doc_add_heading`, `doc_add_paragraph`, `doc_add_numbered_list`,
-`doc_insert_table`, `doc_add_page_numbers`, `doc_insert_table_of_contents`.
-Sprawdź: spis treści zawiera oba nagłówki, numeracja stron widoczna w stopce.
+Covers: `xl_get_range_values`, `doc_add_paragraph`, `ppt_add_textbox`,
+`xl_export_pdf`, `doc_export_pdf`, `ppt_export_pdf`.
 
----
+## Diagnostics
 
-## 12. Porządkowanie istniejącego dokumentu
+> Is the bridge running, and which Office apps are connected right now?
 
-> Otwórz `raport.docx`, znajdź wszystkie wystąpienia „TODO” i zamień je na „Zrobione”,
-> a potem pokaż strukturę nagłówków dokumentu.
-
-Narzędzia: `doc_open_document`, `doc_find_replace`, `doc_get_outline`.
-Sprawdź: liczba zamian w odpowiedzi; przy `match_case=False` Word dopasowuje wielkość liter
-wstawianego tekstu do znalezionego.
-
----
-
-## 13. Formatowanie akapitów i marginesów
-
-> W otwartym dokumencie wyjustuj akapit 3, ustaw w nim czcionkę Calibri 12 pt,
-> a marginesy strony zmień na 2 cm z każdej strony.
-
-Narzędzia: `doc_get_outline` (po indeksy), `doc_set_paragraph_alignment`, `doc_set_text_style`,
-`doc_set_page_margins`.
-Sprawdź: indeksy akapitów model bierze z dokumentu, a nie z powietrza.
-
----
-
-## 14. Dokument z obrazem i nagłówkiem firmowym
-
-> Wstaw do dokumentu logo z `C:\grafika\logo.png` o szerokości 120 pt, dodaj nagłówek strony
-> „Firma sp. z o.o.” i podziel dokument stroną przed sekcją „Załączniki”.
-
-Narzędzia: `doc_insert_image`, `doc_insert_header`, `doc_insert_page_break`.
-Sprawdź: brak pliku → `DocumentNotFoundError` zamiast wyjątku Pythona.
-
----
-
-## 15. Przypadki błędne (celowo)
-
-> Dodaj punktory do slajdu 99.
-> Zapisz nowy skoroszyt bez podawania ścieżki.
-> Wstaw wykres typu „spirala”.
-
-Oczekiwane odpowiedzi:
-
-- `InvalidReferenceError` — `slide_index = 99 poza zakresem 1..N`,
-- `InvalidReferenceError` — „Skoroszyt nie ma jeszcze pliku - podaj parametr path”,
-- `InvalidReferenceError` — nieznany typ wykresu z listą dostępnych.
-
-Sprawdź: żadne narzędzie nie zwraca stack trace'a, a Office pozostaje sprawny — kolejne
-polecenia działają dalej.
-
----
-
-## 16. Test odporności połączenia
-
-> Zamknij ręcznie okno PowerPointa, a potem poproś o `ppt_list_slides`.
-> Następnie poproś o `xl_get_workbook_info`.
-
-Oczekiwane: PowerPoint zwraca `ComConnectionError` albo `DocumentNotFoundError` i podnosi się
-przy kolejnym poleceniu, a Excel działa niezależnie — awaria jednej aplikacji nie dotyka reszty.
+Covers: `office_status`.

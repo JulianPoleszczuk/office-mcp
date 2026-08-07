@@ -1,67 +1,29 @@
 # office-mcp
 
-Serwer MCP, który pozwala Claude'owi sterować **otwartymi** aplikacjami Microsoft Office 2019
-(PowerPoint, Excel, Word) na Windows przez automatyzację COM. Model tworzy i edytuje dokumenty
-promptem, a zmiany widać na żywo w oknie aplikacji — bez pośredniego generowania plików i
-otwierania ich ręcznie.
+An MCP server that lets Claude control **open** Microsoft Office apps on Windows:
+PowerPoint, Excel and Word. Claude builds and edits real documents through COM
+automation, and you watch the changes happen live in the Office window.
 
-- 129 narzędzi MCP: `ppt_*` (53), `xl_*` (36), `doc_*` (39), `office_status`
-- pełny cykl: tworzenie, odczyt istniejących dokumentów, edycja, formatowanie, wykresy, obrazy, tabele,
-  animacje i przejścia slajdów
-- podgląd we wszystkich trzech aplikacjach: slajd i zakres Excela do PNG, każdy dokument do PDF —
-  model widzi, co zbudował, zamiast pracować w ciemno
-- styl jako jeden byt: paleta i czcionki motywu, tło na wzorcu — zamiast powtarzania hexów przy każdym kształcie
-- podłącza się do już uruchomionej instancji Office zamiast otwierać drugą
-- 367 testów jednostkowych i integracyjnych działających bez zainstalowanego Office
+There is no intermediate file generation. The model works on the document you
+already have open.
 
-## Architektura
+- 129 tools: 53 for PowerPoint, 36 for Excel, 39 for Word, plus a status tool
+- Create, read, edit, format, chart, animate, export
+- Preview built in: the model can export a slide or a cell range to PNG and look
+  at its own work instead of guessing
+- Attaches to an Office instance you already have running
+- 367 unit and integration tests that run without Office installed
 
-```
-Claude Code / Claude Desktop
-        │  (stdio, protokół MCP)
-        ▼
-┌─────────────────────┐
-│   MCP Server        │  Python, oficjalny SDK `mcp`
-│   (server.py)       │  Rejestruje narzędzia ppt_*, xl_*, doc_*
-└──────────┬──────────┘
-           │  TCP (localhost, JSON-line)
-           ▼
-┌─────────────────────┐
-│   Office Bridge     │  Python, pywin32 (win32com.client)
-│   (bridge/*.py)     │  Trzyma żywe połączenia COM per aplikacja
-└──────────┬──────────┘
-           │  COM
-           ▼
-  PowerPoint.Application / Excel.Application / Word.Application
-```
+## Requirements
 
-**Dlaczego dwie warstwy:**
-
-- klient MCP może restartować `server.py` do woli — Bridge żyje dalej i nie gubi połączeń COM
-  ani otwartych dokumentów użytkownika,
-- Bridge jest zwykłym serwerem TCP, więc można się do niego podpiąć czymkolwiek innym
-  (skrypt debugowy, GUI) bez ruszania warstwy MCP,
-- rozdzielenie ułatwia testy: kontrolery testuje się z zamockowanym COM, transport osobno.
-
-**Izolacja aplikacji.** Każda aplikacja Office dostaje własny wątek COM (apartament STA),
-własny obiekt połączenia i własny stan. Zawieszony Word nie blokuje Excela, a każde wywołanie
-COM ma limit czasu (domyślnie 15 s) — po jego przekroczeniu wątek jest porzucany, połączenie
-oznaczane jako martwe i odtwarzane przy następnym wywołaniu.
-
-**Leniwe łączenie.** Aplikacja startuje dopiero przy pierwszym narzędziu, które jej dotyczy.
-Bridge najpierw próbuje `GetActiveObject` (podłączenie do okna otwartego przez użytkownika),
-a dopiero potem `Dispatch` (uruchomienie nowej instancji).
-
-## Wymagania
-
-| Element | Wersja |
+| Item | Version |
 |---|---|
-| System | Windows 10/11 (**tylko Windows** — COM Office nie istnieje gdzie indziej) |
-| Office | Microsoft Office 2019 (działa też z 2016/365 desktop) |
-| Python | 3.11+ |
-| Biblioteki | `mcp`, `pywin32`, `pytest` |
+| System | Windows 10 or 11. Windows only, because Office COM does not exist elsewhere |
+| Office | Microsoft Office 2019. Also works with 2016 and 365 desktop |
+| Python | 3.11 or newer |
+| Libraries | `mcp`, `pywin32`, `pytest` |
 
-## Instalacja
+## Install
 
 ```powershell
 git clone https://github.com/JulianPoleszczuk/office-mcp.git
@@ -74,25 +36,32 @@ pip install -r requirements.txt
 python .venv\Scripts\pywin32_postinstall.py -install
 ```
 
-`pywin32_postinstall.py -install` rejestruje biblioteki DLL potrzebne do COM. Bez tego kroku
-`win32com.client` potrafi rzucać `ImportError: DLL load failed` przy pierwszym `Dispatch`.
+The `pywin32_postinstall.py -install` step registers the DLLs that COM needs.
+Skip it and `win32com.client` may throw `ImportError: DLL load failed` on the
+first call.
 
-Szybki test, że wszystko widzi Office:
+Quick check that everything can see Office:
 
 ```powershell
 python -m bridge.main --log-level DEBUG
 ```
 
-## Konfiguracja Claude Desktop
+## Set up Claude
 
-Plik `%APPDATA%\Claude\claude_desktop_config.json`:
+In Claude Code:
+
+```powershell
+claude mcp add office -- C:\path\to\office-mcp\.venv\Scripts\python.exe C:\path\to\office-mcp\server.py
+```
+
+In Claude Desktop, edit `%APPDATA%\Claude\claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "office": {
-      "command": "C:\\sciezka\\do\\office-mcp\\.venv\\Scripts\\python.exe",
-      "args": ["C:\\sciezka\\do\\office-mcp\\server.py"],
+      "command": "C:\\path\\to\\office-mcp\\.venv\\Scripts\\python.exe",
+      "args": ["C:\\path\\to\\office-mcp\\server.py"],
       "env": {
         "OFFICE_BRIDGE_PORT": "8765"
       }
@@ -101,466 +70,483 @@ Plik `%APPDATA%\Claude\claude_desktop_config.json`:
 }
 ```
 
-Po zapisaniu pliku zrestartuj Claude Desktop. Narzędzia `ppt_*`, `xl_*`, `doc_*` pojawią się
-na liście dostępnych narzędzi.
+Restart Claude Desktop afterwards. The `ppt_*`, `xl_*` and `doc_*` tools show up
+in the tool list.
 
-W Claude Code wystarczy:
+You do not need to start anything by hand. The Bridge starts on the first tool
+call.
 
-```powershell
-claude mcp add office -- C:\sciezka\do\office-mcp\.venv\Scripts\python.exe C:\sciezka\do\office-mcp\server.py
-```
+### Environment variables
 
-Bridge startuje automatycznie przy pierwszym użyciu narzędzia — nie trzeba go uruchamiać ręcznie.
-
-### Zmienne środowiskowe
-
-| Zmienna | Domyślnie | Znaczenie |
+| Variable | Default | Meaning |
 |---|---|---|
-| `OFFICE_BRIDGE_HOST` | `127.0.0.1` | Adres nasłuchu Bridge |
-| `OFFICE_BRIDGE_PORT` | `8765` | Port Bridge |
-| `OFFICE_BRIDGE_TIMEOUT` | `15` | Limit pojedynczego wywołania COM (s) |
-| `OFFICE_BRIDGE_AUTOSTART` | `1` | `0` wyłącza automatyczny start Bridge przez serwer MCP |
-| `OFFICE_MCP_CALL_TIMEOUT` | `60` | Limit oczekiwania serwera MCP na odpowiedź Bridge (s) |
-| `OFFICE_BRIDGE_LOG_LEVEL` | `INFO` | Poziom logów Bridge |
+| `OFFICE_BRIDGE_HOST` | `127.0.0.1` | Bridge listen address |
+| `OFFICE_BRIDGE_PORT` | `8765` | Bridge port |
+| `OFFICE_BRIDGE_TIMEOUT` | `15` | Time limit for one COM call, in seconds |
+| `OFFICE_BRIDGE_AUTOSTART` | `1` | Set to `0` to stop the MCP server starting the Bridge |
+| `OFFICE_MCP_CALL_TIMEOUT` | `60` | How long the MCP server waits for the Bridge |
+| `OFFICE_BRIDGE_LOG_LEVEL` | `INFO` | Bridge log level |
 
-## Uruchamianie Bridge osobno (debugowanie)
+## How it works
 
-```powershell
-python -m bridge.main --port 8765 --timeout 15 --log-level DEBUG
+```
+Claude Code / Claude Desktop
+        |  (stdio, MCP protocol)
+        v
++---------------------+
+|   MCP server        |  Python, official `mcp` SDK
+|   (server.py)       |  Registers the ppt_*, xl_*, doc_* tools
++----------+----------+
+           |  TCP (localhost, one JSON object per line)
+           v
++---------------------+
+|   Office Bridge     |  Python, pywin32 (win32com.client)
+|   (bridge/*.py)     |  Holds live COM connections, one per app
++----------+----------+
+           |  COM
+           v
+  PowerPoint / Excel / Word
 ```
 
-Bridge loguje każde żądanie i odpowiedź. Można go odpytać zwykłym socketem — jedna linia JSON
-to jedno żądanie:
+**Why two layers.** The MCP client can restart `server.py` whenever it likes.
+The Bridge keeps running, so COM connections stay alive and your open documents
+are not disturbed. The Bridge is also a plain TCP server, so you can talk to it
+with anything else, such as a debug script.
+
+**App isolation.** Each Office app gets its own COM thread (an STA apartment),
+its own connection object and its own state. A hung Word does not block Excel.
+Every COM call has a time limit. Once it passes, the thread is dropped and the
+connection is marked dead, then rebuilt on the next call.
+
+**Lazy connect.** An app only starts when a tool needs it. The Bridge first
+tries `GetActiveObject`, which attaches to a window you already opened. Only if
+that fails does it `Dispatch` a new instance.
+
+### Protocol
+
+Every tool returns JSON in one shape:
+`{"ok": true, "result": {...}}` or `{"ok": false, "error": {"type": ..., "message": ...}}`.
+
+The Bridge speaks one JSON object per line:
+
+```json
+{"id": "uuid", "app": "powerpoint", "action": "add_slide", "params": {"layout": "title_content"}}
+{"id": "uuid", "ok": true, "result": {"slide_index": 2}}
+{"id": "uuid", "ok": false, "error": {"type": "ComConnectionError", "message": "PowerPoint is not responding"}}
+```
+
+You can drive it with a plain socket:
 
 ```powershell
 python -c "import socket, json; s=socket.create_connection(('127.0.0.1',8765)); s.sendall(json.dumps({'id':'1','app':'excel','action':'get_workbook_info','params':{}}).encode()+b'\n'); print(s.recv(65536).decode())"
 ```
 
-Format protokołu:
+## Tools
 
-```json
-{"id": "uuid", "app": "powerpoint", "action": "add_slide", "params": {"layout": "title_content"}}
-{"id": "uuid", "ok": true, "result": {"slide_index": 2}}
-{"id": "uuid", "ok": false, "error": {"type": "ComConnectionError", "message": "PowerPoint nie odpowiada"}}
+### PowerPoint
+
+Coordinates are in points. A 16:9 slide is 960 x 540 pt, and 1 cm is 28.35 pt.
+Slide indexes start at 1.
+
+**Files and slides**
+
+| Tool | What it does |
+|---|---|
+| `ppt_create_presentation(path, template=None)` | New presentation, optionally from a `.potx` |
+| `ppt_open_presentation(path)` | Open a file, or activate one already open |
+| `ppt_save(path=None)` | Save, or save as a new file |
+| `ppt_close(save=True)` | Close the presentation |
+| `ppt_get_presentation_info()` | Slide count, slide size, theme, path |
+| `ppt_list_slides()` | Titles and layouts of every slide |
+| `ppt_get_slide_content(slide_index)` | Shapes, positions, text, notes |
+| `ppt_add_slide(layout, index=None, title=None)` | Add a slide |
+| `ppt_delete_slide(slide_index)` | Delete a slide |
+| `ppt_duplicate_slide(slide_index)` | Duplicate a slide |
+| `ppt_reorder_slide(from_index, to_index)` | Move a slide |
+| `ppt_set_slide_layout(slide_index, layout_name)` | Change the layout |
+| `ppt_copy_slide_to(slide_index, target_path, position=None)` | Copy a slide into another file |
+
+**Text and content**
+
+| Tool | What it does |
+|---|---|
+| `ppt_set_title(slide_index, text)` | Set the slide title |
+| `ppt_add_textbox(slide_index, text, left, top, width, height, ...)` | Text box |
+| `ppt_add_bullet_list(slide_index, items, placeholder="content")` | Bulleted list with levels |
+| `ppt_set_speaker_notes(slide_index, text)` | Speaker notes |
+| `ppt_find_replace_text(old_text, new_text, slide_index=None, ...)` | Replace text, tables and groups included |
+| `ppt_set_text_style(slide_index, shape_id, ...)` | Font, size, colour, bold |
+| `ppt_set_paragraph_format(slide_index, shape_id, ...)` | Line spacing, alignment, anchor, margins |
+
+**Shapes and objects**
+
+| Tool | What it does |
+|---|---|
+| `ppt_add_shape(slide_index, shape_type, left, top, width, height, ...)` | Shape |
+| `ppt_add_image(slide_index, image_path, left, top, width=None, height=None)` | Image |
+| `ppt_add_chart(slide_index, chart_type, categories, series_data, ...)` | Chart with data |
+| `ppt_add_table(slide_index, rows, cols, data, left, top, width, height)` | Table |
+| `ppt_add_media(slide_index, media_path, left, top, ..., autoplay=False)` | Video or audio |
+| `ppt_add_smartart(slide_index, layout, items, left, top, width, height)` | SmartArt diagram |
+| `ppt_list_smartart_layouts(search=None, category=None)` | SmartArt layouts: key, name, category |
+| `ppt_set_shape_format(slide_index, shape_id, ...)` | Gradient, transparency, shadow, outline, corner radius |
+| `ppt_set_shape_position(slide_index, shape_id, ...)` | Move, scale, rotate |
+| `ppt_set_shape_order(slide_index, shape_id, order)` | Layer: front, back, forward, backward |
+| `ppt_delete_shape(slide_index, shape_id)` | Delete a shape |
+| `ppt_group_shapes(slide_index, shape_ids, name=None)` | Group shapes |
+| `ppt_ungroup_shapes(slide_index, shape_id)` | Ungroup |
+| `ppt_align_shapes(slide_index, shape_ids, align, ...)` | Align to each other or to the slide |
+| `ppt_distribute_shapes(slide_index, shape_ids, direction, ...)` | Even spacing, needs 3 or more |
+| `ppt_format_chart(slide_index, shape_id, ...)` | Series colours, axes, legend, labels, background |
+
+**Design, motion and navigation**
+
+| Tool | What it does |
+|---|---|
+| `ppt_get_theme()` | Theme palette and fonts |
+| `ppt_set_theme_colors(colors)` | Change the theme palette |
+| `ppt_set_theme_fonts(major, minor)` | Heading and body fonts |
+| `ppt_apply_theme(theme_name_or_path)` | Theme from a `.thmx`/`.potx` or the Office gallery |
+| `ppt_set_master_background(color, image_path, apply_to_slides=True)` | Background once, on the master |
+| `ppt_set_background(slide_index, color=None, image_path=None)` | Background of one slide |
+| `ppt_add_animation(slide_index, shape_id, effect, trigger, ...)` | Animate a shape |
+| `ppt_list_animations(slide_index)` | Animations in playback order |
+| `ppt_set_transition(effect, slide_index=None, ...)` | Slide transition |
+| `ppt_add_hyperlink(slide_index, shape_id, url=None, target_slide=None, ...)` | Link out, or jump to a slide |
+| `ppt_set_headers_footers(slide_index=None, footer_text=None, ...)` | Footer, slide number, date |
+| `ppt_list_sections()`, `ppt_add_section(name, before_slide)`, `ppt_delete_section(...)` | Sections |
+| `ppt_slideshow(command, slide_index=None)` | Slide show: start, stop, goto |
+| `ppt_export_slide(slide_index, path, width=None, height=None)` | Slide to an image |
+| `ppt_export_pdf(path)` | Presentation to PDF |
+
+Layouts: `title`, `title_content`, `two_content`, `title_only`, `blank`,
+`section_header`, `comparison`, `picture_with_caption`, `content_with_caption`,
+`chart`, `table`, `four_objects`.
+
+Charts: `bar`, `column`, `line`, `pie`, `area`, `scatter`, `doughnut`, `radar`,
+`bubble`.
+
+Shapes: `rectangle`, `rounded_rectangle`, `oval`, `triangle`, `diamond`, `star`,
+`arrow_right`, `callout`, `cloud`, `hexagon`, `chevron`. Both `fill_color` and
+`line_color` accept `"none"`.
+
+### Excel
+
+Sheets can be named or numbered. Ranges use A1 notation.
+
+| Tool | What it does |
+|---|---|
+| `xl_create_workbook(path)` | New workbook |
+| `xl_open_workbook(path)` | Open a file, or activate one already open |
+| `xl_save(path=None)`, `xl_close(save=True)` | Save and close |
+| `xl_get_workbook_info()` | Sheets, their data ranges, active sheet, path |
+| `xl_add_sheet(name, index=None)`, `xl_delete_sheet(name)`, `xl_rename_sheet(...)` | Manage sheets |
+| `xl_get_range_values(sheet, range_ref)` | Read a range as a 2D array |
+| `xl_get_used_range(sheet)` | The filled area, with data |
+| `xl_get_cell_formula(sheet, range_ref)` | Formulas plus their results |
+| `xl_set_cell(sheet, cell_ref, value)` | One cell |
+| `xl_set_range(sheet, start_cell, values_2d)` | A whole matrix at once |
+| `xl_set_formula(sheet, cell_ref, formula)` | Formula and computed result |
+| `xl_clear_range(sheet, range_ref, contents_only=True)` | Clear a range |
+| `xl_copy_range(sheet, range_ref, target_cell, ...)` | Copy: all, values, formats |
+| `xl_find_replace(old_text, new_text, sheet=None, ...)` | Replace text |
+| `xl_sort_range(sheet, range_ref, sort_by, order, has_headers)` | Sort |
+| `xl_set_autofilter(sheet, range_ref=None, enable=True)` | AutoFilter |
+| `xl_insert_rows(...)`, `xl_delete_rows(...)` | Rows |
+| `xl_insert_columns(...)`, `xl_delete_columns(...)` | Columns |
+| `xl_set_column_width(sheet, column, width)` | Column width, `"auto"` fits |
+| `xl_set_row_height(sheet, row, height)` | Row height, `"auto"` fits |
+| `xl_set_cell_format(sheet, range_ref, ...)` | Font, colours, number format, alignment, wrap |
+| `xl_merge_cells(sheet, range_ref, center=True)` | Merge cells |
+| `xl_apply_conditional_formatting(sheet, range_ref, rule_type, params)` | Conditional formatting |
+| `xl_add_data_validation(sheet, range_ref, ...)` | Dropdowns and value rules |
+| `xl_freeze_panes(sheet, cell_ref)` | Freeze panes |
+| `xl_add_chart(sheet, chart_type, data_range, ...)` | Chart |
+| `xl_format_chart(sheet, chart, ...)` | Series colours, axes, legend, labels |
+| `xl_create_table(sheet, range_ref, table_name, ...)` | Native Excel table |
+| `xl_add_pivot_table(sheet, source_range, dest_cell, rows, columns, values, ...)` | Pivot table |
+| `xl_export_range_image(sheet, range_ref, path)` | A range as an image |
+| `xl_export_pdf(path, sheet=None, range_ref=None)` | Workbook, sheet or range to PDF |
+
+Conditional formatting rules: `cell_value` (with operators `greater`, `less`,
+`equal`, `not_equal`, `greater_equal`, `less_equal`, `between`, `not_between`),
+`expression`, `text_contains`, `color_scale`, `data_bar`.
+
+Pivot functions: `sum`, `count`, `average`, `max`, `min`, `product`,
+`count_numbers`, `std_dev`.
+
+### Word
+
+Paragraphs are indexed from 1. Style names can be given in English even in a
+localised Word.
+
+| Tool | What it does |
+|---|---|
+| `doc_create_document(path, template=None)` | New document, optionally from a `.dotx` |
+| `doc_open_document(path)` | Open a file, or activate one already open |
+| `doc_save(path=None)`, `doc_close(save=True)` | Save and close |
+| `doc_get_document_info()` | Pages, words, characters, template, path |
+| `doc_get_full_text()` | The whole text |
+| `doc_get_outline()` | Heading tree with paragraph indexes |
+| `doc_get_paragraph(paragraph_index, count=1)` | Read paragraphs with style and alignment |
+| `doc_add_paragraph(text, style=None)` | Paragraph at the end |
+| `doc_insert_paragraph(text, paragraph_index=None, after=False, style=None)` | Paragraph at a given place |
+| `doc_delete_paragraph(paragraph_index, count=1)` | Delete paragraphs |
+| `doc_add_heading(text, level=1)` | Heading, level 1 to 9 |
+| `doc_add_bullet_list(items)`, `doc_add_numbered_list(items)` | Lists with levels |
+| `doc_find_replace(old_text, new_text, match_case=False)` | Replace text |
+| `doc_set_text_style(paragraph_index, ...)` | Font, size, colour, bold, italic |
+| `doc_apply_style(paragraph_index, style_name)` | Paragraph style |
+| `doc_set_paragraph_alignment(paragraph_index, alignment)` | Alignment |
+| `doc_set_paragraph_format(paragraph_index=None, style=None, ...)` | Line spacing, indents, page breaks |
+| `doc_set_default_font(name=None, size=None)` | The Normal style font |
+| `doc_set_page_margins(top, bottom, left, right, unit="cm")` | Margins |
+| `doc_set_page_setup(orientation, gutter, mirror_margins, ...)` | Binding, mirror margins, orientation |
+| `doc_insert_page_break()`, `doc_insert_section_break(break_type, ...)` | Breaks |
+| `doc_set_columns(count=1, section=1, spacing=None)` | Newspaper columns |
+| `doc_insert_image(image_path, width=None, height=None, position, unit)` | Image |
+| `doc_insert_table(rows, cols, data=None, position=None)` | Table |
+| `doc_format_table(table_index, style, borders, header_bold, ...)` | Table formatting |
+| `doc_add_hyperlink(url, text=None, paragraph_index=None, tooltip=None)` | Hyperlink |
+| `doc_add_footnote(paragraph_index, text)` | Footnote |
+| `doc_add_caption(paragraph_index, text, label, above=False)` | Numbered caption |
+| `doc_insert_header(text, section=1)`, `doc_insert_footer(text, section=1)` | Header and footer |
+| `doc_add_page_numbers(alignment="center", first_page=True)` | Page numbers |
+| `doc_insert_table_of_contents(levels=3, position="start")` | Table of contents |
+| `doc_insert_table_of_figures(label, position)` | Table of figures or tables |
+| `doc_set_heading_numbering(enable=True, levels=3)` | Chapter numbering 1., 1.1, 1.1.1 |
+| `doc_update_fields()` | Refresh tables, captions and numbering |
+| `doc_export_pdf(path, open_after=False)` | Document to PDF |
+
+### Diagnostics
+
+| Tool | What it does |
+|---|---|
+| `office_status()` | Bridge state and the COM connection of all three apps |
+
+## Letting the model see its own work
+
+Without a preview the model places things blind. It cannot tell that a footer
+overlaps a panel or that a column is too narrow. Every app has a way to show the
+result:
+
+| App | Preview | Whole document |
+|---|---|---|
+| PowerPoint | `ppt_export_slide` to PNG or JPG | `ppt_export_pdf` |
+| Excel | `xl_export_range_image` to PNG or JPG | `xl_export_pdf` |
+| Word | none | `doc_export_pdf` |
+
+A normal loop looks like this:
+
+```
+ppt_add_textbox(...)
+ppt_export_slide(1, "preview.png")      -> look at it
+ppt_set_shape_position(1, 42, top=496)  -> fix it
+ppt_export_slide(1, "preview.png")      -> check again
 ```
 
-## Narzędzia
+Excel cannot export a range to an image directly. `xl_export_range_image` copies
+the range to the clipboard as a bitmap, drops it on a temporary chart object,
+which can export, and then removes that chart.
 
-Wszystkie narzędzia zwracają JSON w jednym formacie:
-`{"ok": true, "result": {...}}` albo `{"ok": false, "error": {"type": ..., "message": ...}}`.
+## Styling a deck once
 
-### PowerPoint (`ppt_*`)
-
-| Narzędzie | Opis |
-|---|---|
-| `ppt_create_presentation(path, template=None)` | Nowa prezentacja, opcjonalnie z szablonu `.potx` |
-| `ppt_open_presentation(path)` | Otwiera plik lub aktywuje już otwarty |
-| `ppt_save(path=None)` | `Save` albo `SaveAs` |
-| `ppt_close(save=True)` | Zamyka prezentację |
-| `ppt_get_presentation_info()` | Liczba slajdów, rozmiar slajdu, motyw, ścieżka |
-| `ppt_get_slide_content(slide_index)` | Kształty, pozycje, teksty, notatki |
-| `ppt_list_slides()` | Tytuły i układy wszystkich slajdów |
-| `ppt_add_slide(layout, index=None, title=None)` | Dodaje slajd o wybranym układzie |
-| `ppt_delete_slide(slide_index)` | Usuwa slajd |
-| `ppt_duplicate_slide(slide_index)` | Duplikuje slajd |
-| `ppt_reorder_slide(from_index, to_index)` | Przenosi slajd |
-| `ppt_set_title(slide_index, text)` | Ustawia tytuł slajdu |
-| `ppt_add_textbox(slide_index, text, left, top, width, height, ...)` | Pole tekstowe |
-| `ppt_add_bullet_list(slide_index, items, placeholder="content")` | Lista punktowana z poziomami |
-| `ppt_find_replace_text(old_text, new_text, slide_index=None, match_case=False)` | Podmiana tekstu (też w tabelach i grupach) |
-| `ppt_set_speaker_notes(slide_index, text)` | Notatki prelegenta |
-| `ppt_set_text_style(slide_index, shape_id, ...)` | Czcionka, rozmiar, kolor, pogrubienie |
-| `ppt_apply_theme(theme_name_or_path)` | Motyw z pliku `.thmx`/`.potx` lub galerii Office |
-| `ppt_set_background(slide_index, color=None, image_path=None)` | Tło slajdu |
-| `ppt_set_slide_layout(slide_index, layout_name)` | Zmiana układu |
-| `ppt_add_image(slide_index, image_path, left, top, width=None, height=None)` | Obraz |
-| `ppt_add_chart(slide_index, chart_type, categories, series_data, ...)` | Wykres z danymi |
-| `ppt_add_table(slide_index, rows, cols, data, left, top, width, height)` | Tabela |
-| `ppt_add_shape(slide_index, shape_type, left, top, width, height, ...)` | Kształt |
-| `ppt_group_shapes(slide_index, shape_ids, name=None)` | Łączy kształty w grupę |
-| `ppt_ungroup_shapes(slide_index, shape_id)` | Rozbija grupę |
-| `ppt_align_shapes(slide_index, shape_ids, align, relative_to_slide=False)` | Wyrównanie do siebie albo do slajdu |
-| `ppt_distribute_shapes(slide_index, shape_ids, direction, ...)` | Równe odstępy (min. 3 kształty) |
-| `ppt_add_hyperlink(slide_index, shape_id, url=None, target_slide=None, tooltip=None)` | Link zewnętrzny albo skok do slajdu |
-| `ppt_set_headers_footers(slide_index=None, footer_text=None, ...)` | Stopka, numer slajdu, data |
-| `ppt_add_media(slide_index, media_path, left, top, ..., autoplay=False)` | Wideo albo dźwięk |
-| `ppt_list_smartart_layouts(search=None, category=None)` | Układy SmartArt: klucz, nazwa, kategoria |
-| `ppt_add_smartart(slide_index, layout, items, left, top, width, height)` | Diagram SmartArt z tekstem |
-| `ppt_list_sections()` | Sekcje z zakresem slajdów |
-| `ppt_add_section(name, before_slide=1)` | Zakłada sekcję |
-| `ppt_delete_section(section_index, delete_slides=False)` | Usuwa sekcję |
-| `ppt_slideshow(command, slide_index=None)` | Pokaz slajdów: `start`, `stop`, `goto` |
-| `ppt_copy_slide_to(slide_index, target_path, position=None)` | Kopiuje slajd do innej prezentacji |
-| `ppt_get_theme()` | Paleta kolorów i czcionki motywu |
-| `ppt_set_theme_colors(colors)` | Podmienia kolory palety motywu |
-| `ppt_set_theme_fonts(major, minor)` | Czcionka nagłówków i treści |
-| `ppt_set_master_background(color, image_path, apply_to_slides=True)` | Tło raz, na wzorcu slajdów |
-| `ppt_set_shape_format(slide_index, shape_id, ...)` | Gradient, przezroczystość, cień, obrys, promień rogu |
-| `ppt_set_paragraph_format(slide_index, shape_id, ...)` | Interlinia, odstępy, wyrównanie, kotwica, marginesy |
-| `ppt_format_chart(slide_index, shape_id, ...)` | Kolory serii, osie, legenda, etykiety, tło wykresu |
-| `ppt_delete_shape(slide_index, shape_id)` | Usuwa kształt ze slajdu |
-| `ppt_set_shape_position(slide_index, shape_id, left, top, width, height, rotation)` | Przesuwa, skaluje i obraca istniejący kształt |
-| `ppt_set_shape_order(slide_index, shape_id, order)` | Warstwa kształtu: `front`, `back`, `forward`, `backward` |
-| `ppt_export_slide(slide_index, path, width=None, height=None)` | Slajd jako obraz (PNG/JPG/GIF/BMP/WMF/EMF) |
-| `ppt_export_pdf(path, embed_fonts=True)` | Cała prezentacja do PDF-u, bez ruszania otwartego pliku |
-| `ppt_add_animation(slide_index, shape_id, effect, trigger, level, duration, delay, exit_effect)` | Animacja kształtu w sekwencji głównej slajdu |
-| `ppt_list_animations(slide_index)` | Animacje slajdu w kolejności odtwarzania + jego przejście |
-| `ppt_set_transition(effect, slide_index=None, duration, advance_on_click, advance_after)` | Przejście slajdu; bez `slide_index` całej prezentacji |
-
-Układy: `title`, `title_content`, `two_content`, `title_only`, `blank`, `section_header`,
-`comparison`, `picture_with_caption`, `content_with_caption`, `chart`, `table`, `four_objects`.
-Wykresy: `bar`, `column`, `line`, `pie`, `area`, `scatter`, `doughnut`, `radar`, `bubble`.
-Kształty: `rectangle`, `rounded_rectangle`, `oval`, `triangle`, `diamond`, `star`,
-`arrow_right`, `callout`, `cloud`, `hexagon`, `chevron`. `fill_color` i `line_color`
-przyjmują `"none"`, żeby wyłączyć wypełnienie albo obrys z motywu.
-
-Współrzędne podaje się w punktach: slajd 16:9 ma 960 × 540 pt, 1 cm = 28,35 pt.
-
-#### Styl w jednym miejscu
-
-`ppt_set_theme_colors` + `ppt_set_theme_fonts` + `ppt_set_master_background` ustawiają wygląd
-**raz**, na wzorcu, zamiast powtarzania tego samego hexa przy każdym kształcie:
+`ppt_set_theme_colors`, `ppt_set_theme_fonts` and `ppt_set_master_background`
+set the look **once**, on the master, instead of repeating the same hex colour
+on every shape:
 
 ```
 ppt_set_theme_colors({"dark1": "#0B1014", "light1": "#ECF2F0", "accent1": "#10A37F"})
 ppt_set_theme_fonts(major="Segoe UI", minor="Segoe UI")
-ppt_set_master_background(color="#0B1014")   # wszystkie slajdy naraz
+ppt_set_master_background(color="#0B1014")
 ```
 
-`apply_to_slides=True` (domyślnie) włącza slajdom `FollowMasterBackground`, więc te, które
-miały własne tło z `ppt_set_background`, wracają pod wzorzec. `ppt_get_theme()` czyta paletę
-z powrotem.
+`apply_to_slides=True`, the default, turns on `FollowMasterBackground`, so
+slides that had their own background from `ppt_set_background` go back to the
+master.
 
-**Uwaga na łamanie wierszy.** COM traktuje `\n` jako *miękki* łamacz wiersza wewnątrz jednego
-akapitu. Kontroler zamienia `\n` i `\r\n` na `\r`, czyli prawdziwy separator akapitu — bez tego
-`Paragraphs().Count` zwracałoby 1 i `ppt_set_paragraph_format` nie miałoby czego adresować.
+## Writing a thesis in Word
 
-#### SmartArt jest zlokalizowany
-
-`SmartArtLayouts` zwraca **przetłumaczone** nazwy — polski Office ma „Podstawowa lista blokowa",
-nie „Basic Block List". Dlatego `ppt_list_smartart_layouts` podaje obok nazwy `key` (końcówkę
-identyfikatora URN, np. `bProcess3`, `hierarchy1`) i `category` — oba są takie same we wszystkich
-wersjach językowych. `ppt_add_smartart` dopasowuje układ po kluczu, numerze albo nazwie, w tej
-kolejności.
-
-```
-ppt_list_smartart_layouts(category="process")   → 33 układy z kluczami
-ppt_add_smartart(2, "bProcess3", ["Badania", "Skalowanie", "Produkt"], 60, 140, 840, 260)
-```
-
-Podwęzły powstają przez `AddNode` na rodzicu, nie przez `Demote()` — część układów (m.in.
-`hierarchy1`) odrzuca `Demote()` komunikatem „operacja nie jest obsługiwana przez bieżący obiekt".
-
-#### Praca dyplomowa
-
-Zestaw narzędzi wystarczający na skład pracy magisterskiej: strona tytułowa, spis treści za nią,
-numerowane rozdziały, podpisy rysunków i tabel, spis rysunków, przypisy, oprawa dwustronna.
+The Word tools cover a full dissertation layout: title page, table of contents
+after it, numbered chapters, figure and table captions, a table of figures,
+footnotes and two sided binding.
 
 ```
 doc_set_default_font("Times New Roman", 12)
 doc_set_page_margins(2.5, 2.5, 3.5, 2.5, unit="cm")
-doc_set_page_setup(gutter=0.5, mirror_margins=True)         # margines na oprawę
+doc_set_page_setup(gutter=0.5, mirror_margins=True)
 doc_set_paragraph_format(style="Normal", line_spacing=1.5,
                          first_line_indent=1.25, alignment="justify", unit="cm")
-... treść z doc_add_heading / doc_add_paragraph ...
-doc_set_heading_numbering(levels=3)                          # 1., 1.1, 1.1.1
-doc_insert_table_of_contents(levels=3, position=<akapit>)    # za stroną tytułową
-doc_update_fields()                                          # bez tego spis jest pusty
+
+... write chapters with doc_add_heading and doc_add_paragraph ...
+
+doc_set_heading_numbering(levels=3)                        # 1., 1.1, 1.1.1
+doc_insert_table_of_contents(levels=3, position=<paragraph>)
+doc_update_fields()                                        # without this the TOC is empty
 ```
 
-**Etykiety podpisów.** `doc_add_caption(label="figure")` używa etykiety wbudowanej, a Word sam
-decyduje, czy nazwie ją „Figure" czy „Rysunek" — bywa to niespójne między instalacjami. Praca
-po polsku powinna podawać etykietę wprost: `label="Rysunek"`, `label="Tabela"`. Nazwa trafia
-wtedy do dokumentu dosłownie, a `doc_insert_table_of_figures(label="Rysunek")` zbierze te podpisy
-do spisu.
+**Caption labels.** `doc_add_caption(label="figure")` uses a built in label, and
+Word decides whether to call it "Figure" or something else. That can differ
+between installations. If you need a specific word, pass it directly:
+`label="Figure"`, `label="Rysunek"`, `label="Abbildung"`. The text goes into the
+document as written, and `doc_insert_table_of_figures(label=...)` collects those
+captions.
 
-#### Pętla zwrotna (wszystkie trzy aplikacje)
+## Errors
 
-Bez podglądu model wstawia elementy w ciemno i nie wie, że stopka nachodzi na panel albo że
-kolumna jest za wąska. Każda aplikacja ma teraz swój sposób pokazania wyniku:
+Controllers never let a raw `pywintypes.com_error` through. Every COM error is
+mapped to a type from `bridge/utils/errors.py`:
 
-| Aplikacja | Podgląd | Dokument |
-|---|---|---|
-| PowerPoint | `ppt_export_slide` → PNG/JPG | `ppt_export_pdf` |
-| Excel | `xl_export_range_image` → PNG/JPG | `xl_export_pdf` (skoroszyt, arkusz albo zakres) |
-| Word | — | `doc_export_pdf` |
-
-Excel nie ma bezpośredniego eksportu zakresu do obrazu, więc `xl_export_range_image` kopiuje
-zakres jako bitmapę na tymczasowy obiekt wykresu (ten już potrafi `Export`) i usuwa go po
-zapisaniu pliku.
-
-#### Pętla zwrotna dla slajdów
-
-`ppt_export_slide` zapisuje slajd jako obraz, dzięki czemu model może **zobaczyć**, co
-zbudował, i poprawić układ — bez tego wstawia kształty w ciemno i nie wie, że stopka
-nachodzi na panel albo że tekst łamie się w złym miejscu. Bez podanych wymiarów obraz ma
-1920 px szerokości, a wysokość liczy się z proporcji slajdu.
-
-```
-ppt_add_textbox(...)  →  ppt_export_slide(1, "podglad.png")  →  obejrzyj
-                      →  ppt_set_shape_position(1, 42, top=496)  →  eksportuj ponownie
-```
-
-#### Animacje i przejścia
-
-Efekty animacji (`MSO_ANIM_EFFECTS`) to m.in. `fade`, `fly`, `wipe`, `zoom`, `float`, `rise_up`,
-`ascend`, `descend`, `split`, `wheel`, `bounce`, `grow_and_turn`, `swivel`, efekty
-wyróżnienia (`spin`, `grow_shrink`, `teeter`, `transparency`, `change_font_color`) oraz ścieżki
-ruchu (`path_circle`, `path_left`, `path_wave`). Pełna mapa nazw jest w
-`bridge/utils/com_helpers.py`.
-
-Wyzwalacze: `on_click`, `with_previous`, `after_previous`, `on_shape_click`.
-`level` steruje ziarnistością: `shape` (cały kształt), `by_paragraph` / `first_level` … `fifth_level`
-(tekst akapitami) oraz `chart_by_category` / `chart_by_series` dla wykresów.
-`exit_effect=True` zamienia efekt wejścia na wyjście.
-
-Przejścia (`PP_TRANSITIONS`): `fade`, `fade_smoothly`, `dissolve`, `cut`, `push_left`,
-`wipe_right`, `cover_up`, `uncover_down`, `split_vertical_out`, `zoom_in`, `wheel_4`,
-`honeycomb`, `gallery_left`, `cube_left`, `flip_right`, `doors_vertical`, `curtains`,
-`prestige`, `fracture`, `page_curl_single_left`, `origami_left`, `morph` i inne.
-`duration` podaje się w sekundach, `advance_after` włącza automatyczną zmianę slajdu po czasie.
-
-### Excel (`xl_*`)
-
-| Narzędzie | Opis |
+| Type | When |
 |---|---|
-| `xl_create_workbook(path)` | Nowy skoroszyt |
-| `xl_open_workbook(path)` | Otwiera plik lub aktywuje już otwarty |
-| `xl_save(path=None)` | `Save` albo `SaveAs` |
-| `xl_close(save=True)` | Zamyka skoroszyt |
-| `xl_add_sheet(name, index=None)` | Nowy arkusz |
-| `xl_delete_sheet(name)` | Usuwa arkusz |
-| `xl_rename_sheet(old_name, new_name)` | Zmienia nazwę arkusza |
-| `xl_get_workbook_info()` | Arkusze, ich zakresy danych, aktywny arkusz, ścieżka |
-| `xl_get_range_values(sheet, range_ref)` | Odczyt zakresu jako tablica 2D |
-| `xl_get_used_range(sheet)` | Faktycznie wypełniony obszar wraz z danymi |
-| `xl_set_cell(sheet, cell_ref, value)` | Wartość pojedynczej komórki |
-| `xl_set_range(sheet, start_cell, values_2d)` | Wklejenie całej macierzy naraz |
-| `xl_set_formula(sheet, cell_ref, formula)` | Formuła + wyliczony wynik |
-| `xl_clear_range(sheet, range_ref, contents_only=True)` | Czyszczenie zakresu |
-| `xl_insert_rows(sheet, start_row, count=1)` | Wstawianie wierszy |
-| `xl_delete_rows(sheet, start_row, count=1)` | Usuwanie wierszy |
-| `xl_insert_columns(sheet, start_col, count=1)` | Wstawianie kolumn (litera albo numer) |
-| `xl_set_cell_format(sheet, range_ref, ...)` | Czcionka, kolory, format liczb, wyrównanie, zawijanie |
-| `xl_set_column_width(sheet, column, width)` | Szerokość kolumny, `width="auto"` = autodopasowanie |
-| `xl_merge_cells(sheet, range_ref, center=True)` | Scalanie komórek |
-| `xl_apply_conditional_formatting(sheet, range_ref, rule_type, params)` | Formatowanie warunkowe |
-| `xl_freeze_panes(sheet, cell_ref)` | Blokowanie okienek |
-| `xl_add_chart(sheet, chart_type, data_range, left, top, width, height, title=None)` | Wykres |
-| `xl_create_table(sheet, range_ref, table_name, has_headers=True, style=...)` | Natywna tabela Excela |
-| `xl_add_pivot_table(sheet, source_range, dest_cell, rows, columns, values, ...)` | Tabela przestawna |
-| `xl_delete_columns(sheet, start_col, count=1)` | Usuwa kolumny (litera albo numer) |
-| `xl_set_row_height(sheet, row, height)` | Wysokość wiersza, `height="auto"` = autodopasowanie |
-| `xl_find_replace(old_text, new_text, sheet=None, ...)` | Podmiana tekstu, domyślnie we wszystkich arkuszach |
-| `xl_sort_range(sheet, range_ref, sort_by, order, has_headers)` | Sortowanie zakresu |
-| `xl_set_autofilter(sheet, range_ref=None, enable=True)` | Autofiltr |
-| `xl_copy_range(sheet, range_ref, target_cell, target_sheet=None, paste)` | Kopiowanie: `all`, `values`, `formats` |
-| `xl_add_data_validation(sheet, range_ref, validation_type, ...)` | Lista rozwijana i inne reguły poprawności |
-| `xl_get_cell_formula(sheet, range_ref)` | Formuły zakresu razem z wynikami |
-| `xl_export_pdf(path, sheet=None, range_ref=None)` | Skoroszyt, arkusz albo zakres do PDF-u |
-| `xl_export_range_image(sheet, range_ref, path)` | Zakres jako obraz — podgląd dla modelu |
-| `xl_format_chart(sheet, chart, ...)` | Kolory serii, osie, legenda, etykiety, tło wykresu |
+| `ComConnectionError` | App closed, not responding, or rejected the call because a dialog is open |
+| `ComTimeoutError` | The COM call passed its time limit |
+| `DocumentNotFoundError` | Missing file, missing target directory, or no open document |
+| `InvalidReferenceError` | Bad slide index, missing sheet, bad range, unknown layout or chart name |
+| `UnsupportedOperationError` | Not available in the installed Office version |
+| `ProtocolError` | Bad protocol message, unknown action, missing parameters |
+| `BridgeUnavailable` | The MCP server could not reach the Bridge process |
 
-Reguły formatowania warunkowego: `cell_value` (operatory `greater`, `less`, `equal`,
-`not_equal`, `greater_equal`, `less_equal`, `between`, `not_between`), `expression`,
-`text_contains`, `color_scale`, `data_bar`.
-Funkcje agregujące tabeli przestawnej: `sum`, `count`, `average`, `max`, `min`, `product`,
-`count_numbers`, `std_dev`.
-
-### Word (`doc_*`)
-
-| Narzędzie | Opis |
-|---|---|
-| `doc_create_document(path, template=None)` | Nowy dokument, opcjonalnie z szablonu `.dotx` |
-| `doc_open_document(path)` | Otwiera plik lub aktywuje już otwarty |
-| `doc_save(path=None)` | `Save` albo `SaveAs` |
-| `doc_close(save=True)` | Zamyka dokument |
-| `doc_get_document_info()` | Liczba stron, słów, znaków, szablon, ścieżka |
-| `doc_get_full_text()` | Cały tekst dokumentu |
-| `doc_get_outline()` | Drzewo nagłówków z indeksami akapitów |
-| `doc_add_paragraph(text, style=None)` | Akapit na końcu dokumentu |
-| `doc_add_heading(text, level=1)` | Nagłówek poziomu 1–9 |
-| `doc_insert_page_break()` | Twardy podział strony |
-| `doc_find_replace(old_text, new_text, match_case=False)` | Podmiana tekstu |
-| `doc_add_bullet_list(items)` | Lista punktowana z poziomami |
-| `doc_add_numbered_list(items)` | Lista numerowana |
-| `doc_set_text_style(paragraph_index, ...)` | Czcionka, rozmiar, kolor, pogrubienie, kursywa |
-| `doc_set_paragraph_alignment(paragraph_index, alignment)` | `left`/`center`/`right`/`justify` |
-| `doc_apply_style(paragraph_index, style_name)` | Styl akapitu |
-| `doc_set_page_margins(top, bottom, left, right, unit="cm")` | Marginesy (`cm`, `mm`, `in`, `pt`) |
-| `doc_insert_image(image_path, width=None, height=None, position="inline")` | Obraz w tekście lub pływający |
-| `doc_insert_table(rows, cols, data=None, position=None)` | Tabela z obramowaniem |
-| `doc_insert_header(text, section=1)` | Nagłówek strony |
-| `doc_insert_footer(text, section=1)` | Stopka |
-| `doc_add_page_numbers(alignment="center", first_page=True)` | Numery stron |
-| `doc_insert_table_of_contents(levels=3, position="start")` | Spis treści ze stylów nagłówków |
-| `doc_get_paragraph(paragraph_index, count=1)` | Odczyt akapitów ze stylem i wyrównaniem |
-| `doc_delete_paragraph(paragraph_index, count=1)` | Usuwa akapit albo kilka kolejnych |
-| `doc_insert_paragraph(text, paragraph_index=None, after=False, style=None)` | Akapit w konkretnym miejscu |
-| `doc_add_hyperlink(url, text=None, paragraph_index=None, tooltip=None)` | Hiperłącze |
-| `doc_add_footnote(paragraph_index, text)` | Przypis dolny |
-| `doc_insert_section_break(break_type, paragraph_index=None)` | Podział sekcji |
-| `doc_set_columns(count=1, section=1, spacing=None)` | Układ wielokolumnowy |
-| `doc_set_default_font(name=None, size=None)` | Czcionka stylu Normalny — podstawa dokumentu |
-| `doc_format_table(table_index, style, borders, header_bold, ...)` | Formatowanie wstawionej tabeli |
-| `doc_set_paragraph_format(paragraph_index=None, style=None, line_spacing, ...)` | Interlinia, wcięcia, łamanie akapitów |
-| `doc_set_heading_numbering(enable=True, levels=3)` | Numeracja rozdziałów 1., 1.1, 1.1.1 |
-| `doc_add_caption(paragraph_index, text, label, above=False)` | Numerowany podpis rysunku lub tabeli |
-| `doc_insert_table_of_figures(label, position)` | Spis rysunków albo tabel |
-| `doc_update_fields()` | Odświeża spisy, podpisy i numerację |
-| `doc_set_page_setup(orientation, gutter, mirror_margins, ...)` | Oprawa, marginesy lustrzane, orientacja |
-| `doc_export_pdf(path, open_after=False)` | Dokument do PDF-u |
-
-Nazwy stylów można podawać po angielsku (`Heading 1`, `Normal`, `Quote`, `Caption`) także w
-polskiej wersji Worda — kontroler mapuje je na wbudowane stałe `wdStyle`.
-
-### Diagnostyka
-
-| Narzędzie | Opis |
-|---|---|
-| `office_status()` | Stan Bridge i połączeń COM wszystkich trzech aplikacji |
-
-## Obsługa błędów
-
-Kontrolery nigdy nie przepuszczają surowego `pywintypes.com_error` — każdy błąd COM jest
-mapowany na typ z `bridge/utils/errors.py`:
-
-| Typ | Kiedy |
-|---|---|
-| `ComConnectionError` | Aplikacja zamknięta, nie odpowiada albo odrzuciła wywołanie (otwarty dialog) |
-| `ComTimeoutError` | Wywołanie COM przekroczyło limit czasu |
-| `DocumentNotFoundError` | Plik nie istnieje, katalog docelowy nie istnieje, brak otwartego dokumentu |
-| `InvalidReferenceError` | Zły `slide_index`, nieistniejący arkusz, zły zakres, nieznana nazwa układu/wykresu |
-| `UnsupportedOperationError` | Operacja niedostępna w zainstalowanej wersji Office |
-| `ProtocolError` | Zła wiadomość protokołu, nieznana akcja, brakujące parametry |
-| `BridgeUnavailable` | Serwer MCP nie dogadał się z procesem Bridge |
-
-Przykładowa odpowiedź błędu narzędzia MCP:
+Example error reply:
 
 ```json
 {
   "ok": false,
   "error": {
     "type": "InvalidReferenceError",
-    "message": "slide_index = 7 poza zakresem 1..3"
+    "message": "slide_index = 7 is outside the range 1..3"
   }
 }
 ```
 
-## Testy
+## Things to watch out for
+
+These are real behaviours found while testing against live Office. Most of them
+report success while doing the wrong thing, so they are worth knowing.
+
+**Windows only.** Automation is built on COM. `server.py` and `bridge/main.py`
+exit with a clear message on other platforms.
+
+**Office must be installed**, the desktop version, not the web one.
+
+**COM is fragile between versions.** The same member can be a method in one
+build and a property in another. Versions older than 2016 may lack `AddChart2`
+(there is a fallback to `AddChart`) and some conditional formatting types.
+
+**An open dialog blocks the app.** If a save dialog is open, Office rejects COM
+calls and the tool returns `ComConnectionError`.
+
+**`ppt_open_presentation` does not change the "active" presentation.**
+PowerPoint ignores `Windows.Activate()` when it is not in the foreground, so
+`ActivePresentation` can point at a different file than the one you just opened.
+The controller therefore remembers the path it works on rather than trusting
+`ActivePresentation`. Excel and Word do not have this problem.
+
+**Excel `Range.Sort` parameters are sticky.** Excel remembers `Orientation`,
+`MatchCase` and `SortMethod` from the previous sort in the session. Leaving
+`Orientation` out can sort left to right and reorder columns instead of rows, so
+`xl_sort_range` passes `xlSortColumns` explicitly every time.
+
+**A line chart takes its colour from the outline, not the fill.**
+`series_colors` sets both, because `Format.Fill` works on bars and pies while
+`Format.Line` works on lines and scatter points.
+
+**Office picks the value axis range itself.** With close values it can start far
+from zero, which makes a 486 against 514 gap look like double. Use
+`value_axis_min` and `value_axis_max` to fix that.
+
+**`Chart.Export` in Excel can write a zero length file** without reporting an
+error. `xl_export_range_image` checks the file size and turns that silent
+failure into a clear error.
+
+**`Range.Collapse(wdCollapseEnd)` in Word lands past the paragraph mark**, that
+is, inside the next paragraph. A footnote or hyperlink inserted that way shows
+up before the first word of the following paragraph. `doc_add_footnote` and
+`doc_add_hyperlink` anchor before the mark instead.
+
+**`doc_add_paragraph("")` does not create an empty paragraph.** The controller
+reuses the empty paragraph at the end of the document on purpose. Use
+`doc_set_paragraph_format(space_before=...)` for vertical spacing.
+
+**Nested lists need a gallery template.** `ApplyNumberDefault` makes a single
+level list and going to level 2 fails with OLE error 0x800a1200. The controller
+spots items with `level > 1` and reaches for a multi level template.
+
+**Word translates built in table style names**, the same way it translates
+SmartArt layout names. `doc_format_table` takes language independent names such
+as `light_grid` and `medium_shading1` and maps them to `wdStyle` constants.
+
+**SmartArt layout names are localised.** `ppt_list_smartart_layouts` returns a
+`key` (the tail of the URN, such as `bProcess3`) and a `category` next to the
+name. Both are the same in every language version, so prefer them.
+
+**`SmartArtLayouts` can start returning "access denied."** After heavy SmartArt
+work in one COM session the collection becomes unreachable and only a PowerPoint
+restart helps. This is Office behaviour, not something the code controls.
+
+**`ExportAsFixedFormat` works in Excel and Word but not PowerPoint.** In
+PowerPoint the pywin32 wrapper puts `PyOleEmpty` into the `ExternalExporter`
+parameter and the call cannot be made at all, so `ppt_export_pdf` uses
+`SaveCopyAs` instead.
+
+**The first `ppt_add_chart` in a session takes about 13 seconds**, because
+`ChartData.Activate()` has to start Excel. That is close to the default
+`OFFICE_BRIDGE_TIMEOUT` of 15. For decks with charts, raise the limit or call
+any `xl_*` tool first to warm Excel up.
+
+**Charts cannot be styled per data point.** `ppt_format_chart` and
+`xl_format_chart` cover series colours, axis and label text, background, legend
+and gridlines, but not individual points or a secondary axis.
+
+**Saving a new document needs a path** the first time, for example
+`ppt_save(path=...)`.
+
+**The Bridge does not reload code.** It outlives MCP client restarts by design,
+so after editing a controller you have to kill it. Otherwise new actions return
+`ProtocolError: Unknown action`.
+
+**The Bridge listens on localhost only and has no authentication.** Do not
+expose its port.
+
+## Tests
 
 ```powershell
 python -m pytest -q
 ```
 
-367 testów, wszystkie bez zainstalowanego Office:
+367 tests, all of them running without Office installed:
 
-- `tests/test_bridge_protocol.py` — kodowanie/dekodowanie protokołu oraz test integracyjny
-  serwera TCP (prawdziwy socket, atrapa kontrolera),
-- `tests/test_powerpoint_controller.py`, `test_excel_controller.py`, `test_word_controller.py` —
-  kontrolery z zamockowanym COM (`unittest.mock`),
-- `tests/test_server_tools.py` — warstwa MCP; sprawdza między innymi, że każda akcja użyta
-  w `server.py` istnieje w odpowiednim kontrolerze.
+- `tests/test_bridge_protocol.py` covers protocol encoding and decoding, plus an
+  integration test of the TCP server using a real socket and a fake controller
+- `tests/test_powerpoint_controller.py`, `test_excel_controller.py` and
+  `test_word_controller.py` cover the controllers with COM mocked out
+- `tests/test_server_tools.py` covers the MCP layer, including a check that
+  every action used in `server.py` exists in the matching controller
 
-Scenariusze do ręcznego testu na żywym Office: `examples/example_prompts.md`.
+End to end scenarios to run by hand against live Office are in
+`examples/example_prompts.md`.
 
-## Znane ograniczenia
-
-- **Tylko Windows.** Automatyzacja opiera się na COM; `server.py` i `bridge/main.py` kończą
-  pracę czytelnym komunikatem na innych platformach.
-- **Wymaga zainstalowanego Office** (desktop, nie wersji web). Bridge podłącza się do otwartej
-  instancji albo uruchamia nową.
-- **COM bywa kruche między wersjami.** Ta sama metoda potrafi być raz metodą, raz właściwością —
-  stąd np. helper `com_address`. Wersje starsze niż 2016 mogą nie mieć `AddChart2`
-  (jest fallback na `AddChart`) ani niektórych typów formatowania warunkowego.
-- **Otwarte okno dialogowe blokuje aplikację.** Jeśli użytkownik ma otwarty np. dialog
-  zapisu, Office odrzuca wywołania COM — narzędzie zwróci `ComConnectionError` z podpowiedzią.
-- **Motywy PowerPointa** przyjmuje się jako ścieżkę do `.thmx`/`.potx` albo nazwę z galerii
-  Office; COM nie udostępnia motywów po samej nazwie.
-- **Zamiana tekstu w Wordzie** dopasowuje wielkość liter wstawianego tekstu do znalezionego,
-  gdy `match_case=False` — tak samo jak okno „Znajdź i zamień”.
-- **Zapis** wymaga ścieżki przy pierwszym zapisaniu nowego dokumentu (`ppt_save(path=...)`).
-- **Pierwszy `ppt_add_chart` w sesji trwa ~13 s**, bo `ChartData.Activate()` musi wystartować
-  Excela pod wykres. To bardzo blisko domyślnego `OFFICE_BRIDGE_TIMEOUT=15`, więc przy zimnym
-  starcie wywołanie potrafi się wywrócić. Przy prezentacjach z wykresami warto podnieść limit
-  (`OFFICE_BRIDGE_TIMEOUT=45`) albo wywołać wcześniej dowolne narzędzie `xl_*`, żeby rozgrzać Excela.
-- **Wykres wstawia się w stylu motywu**; do dopasowania go do slajdu służy `ppt_format_chart`
-  (kolory serii, kolor tekstu osi/legendy/etykiet, przezroczyste tło, siatka). Nie ma dostępu
-  do formatowania pojedynczych punktów danych ani osi drugorzędnej.
-- **Eksport do PDF idzie przez `SaveCopyAs`, nie `ExportAsFixedFormat`.** Ta druga metoda jest
-  niewywoływalna przez pywin32 — wygenerowany wrapper podstawia `PyOleEmpty` pod parametr
-  `ExternalExporter` i każde wywołanie kończy się `TypeError: The Python instance can not be
-  converted to a COM object`, niezależnie od wiązania. Skutek uboczny: nie da się wybrać
-  jakości ekran/druk ani zakresu slajdów.
-- **`ppt_open_presentation` nie zmienia „aktywnej" prezentacji.** PowerPoint ignoruje
-  `Windows.Activate()`, gdy aplikacja nie jest na wierzchu — `ActivePresentation` potrafi
-  wskazywać zupełnie inny plik niż ten właśnie otwarty, a kolejne narzędzia po cichu edytują
-  nie ten dokument. Kontroler zapamiętuje więc ścieżkę pliku, na którym pracuje, zamiast ufać
-  `ActivePresentation`. Excel i Word takiego problemu nie mają.
-- **`doc_add_paragraph("")` nie tworzy pustego akapitu** — kontroler świadomie używa ponownie
-  pustego akapitu na końcu dokumentu. Odstępy pionowe robi się przez
-  `doc_set_paragraph_format(space_before=…)`, a nie pustymi akapitami.
-- **Listy z zagnieżdżeniem wymagają szablonu z galerii.** `ApplyNumberDefault` tworzy listę
-  jednopoziomową i zejście na poziom 2 kończy się błędem OLE 0x800a1200; kontroler wykrywa
-  pozycje z `level > 1` i sięga wtedy po szablon wielopoziomowy.
-- **Wykres liniowy bierze kolor z obrysu, nie z wypełnienia.** `series_colors` ustawia oba,
-  bo `Format.Fill` działa na słupkach i kołowych, a `Format.Line` na liniowych i punktowych —
-  ustawienie samego wypełnienia kończy się „sukcesem" przy niezmienionym kolorze linii.
-- **Office sam dobiera zakres osi wartości** i przy zbliżonych słupkach potrafi zacząć ją daleko
-  od zera — różnica 486 vs 514 wygląda wtedy jak dwukrotna. `value_axis_min` / `value_axis_max`
-  w `xl_format_chart` i `ppt_format_chart` pozwalają to naprostować.
-- **`Chart.Export` w Excelu potrafi zapisać plik zerowej długości** i nie zgłosić błędu, gdy
-  arkusz nie był aktywny albo schowek był zajęty. `xl_export_range_image` sprawdza rozmiar
-  wynikowego pliku i zamienia takie ciche niepowodzenie na czytelny błąd.
-- **`Range.Collapse(wdCollapseEnd)` w Wordzie ląduje za znacznikiem akapitu**, czyli już
-  w następnym. Przypis albo hiperłącze wstawione w ten sposób pojawia się przed pierwszym
-  słowem kolejnego akapitu — `doc_add_footnote` i `doc_add_hyperlink` kotwiczą się przed
-  znacznikiem, a nie za nim.
-- **Parametry `Range.Sort` w Excelu są „lepkie".** Excel pamięta `Orientation`, `MatchCase`
-  i `SortMethod` z poprzedniego sortowania w sesji. Pominięcie `Orientation` potrafi posortować
-  zakres lewo-prawo i poprzestawiać kolumny zamiast wierszy — `xl_sort_range` podaje
-  `xlSortColumns` jawnie przy każdym wywołaniu.
-- **Wbudowane style tabel Worda są zlokalizowane**, tak samo jak układy SmartArt. `doc_format_table`
-  przyjmuje nazwy niezależne od języka (`light_grid`, `medium_shading1`, `colorful_list`…)
-  i mapuje je na stałe `wdStyle`; przypisanie `"Table Grid"` po angielsku kończy się w polskim
-  Wordzie błędem „element o podanej nazwie nie istnieje".
-- **`ExportAsFixedFormat` działa w Excelu i Wordzie, ale nie w PowerPoincie.** W tych dwóch
-  aplikacjach pywin32 wywołuje ją normalnie, więc `xl_export_pdf` i `doc_export_pdf` używają jej
-  wprost; tylko PowerPoint wymaga obejścia przez `SaveCopyAs`.
-- **`SmartArtLayouts` potrafi zacząć zwracać „Odmowa dostępu".** Kolekcja układów bywa
-  nieosiągalna po intensywnej pracy z SmartArtem w jednej sesji COM; pomaga dopiero restart
-  PowerPointa. Sam kod nie ma na to wpływu — po ponownym uruchomieniu aplikacji te same
-  wywołania przechodzą.
-- **Tekst stopki na układzie bez placeholdera** (np. `blank`) jest odrzucany przez slajd.
-  `ppt_set_headers_footers` wykrywa to i zapisuje tekst na wzorcu, sygnalizując
-  `text_on_master: true` — widoczność stopki nadal ustawia się per slajd.
-- **Bridge nie przeładowuje kodu.** Żyje między restartami klienta MCP (to jest jego sens), więc
-  po zmianie kontrolera trzeba go ubić — inaczej nowe akcje zwracają
-  `ProtocolError: Nieznana akcja`.
-- Bridge nasłuchuje wyłącznie na localhost i nie ma uwierzytelniania — nie należy wystawiać
-  jego portu na zewnątrz.
-
-## Struktura projektu
+## Project layout
 
 ```
 office-mcp/
-├── server.py                    # serwer MCP (stdio), rejestracja narzędzi, klient Bridge
-├── bridge/
-│   ├── main.py                  # serwer TCP, protokół JSON-line, routing do kontrolerów
-│   ├── protocol.py              # Request/Response + kodowanie linii
-│   ├── connection_manager.py    # leniwe łączenie COM, wątki STA, timeouty
-│   ├── controllers/
-│   │   ├── base.py              # routing akcji, mapowanie com_error, wspólne helpery
-│   │   ├── powerpoint.py        # PowerPointController
-│   │   ├── excel.py             # ExcelController
-│   │   └── word.py              # WordController
-│   └── utils/
-│       ├── com_helpers.py       # kolory, jednostki, stałe Office, konwersje wartości
-│       └── errors.py            # hierarchia wyjątków
-├── tests/                       # testy protokołu, kontrolerów (mock COM) i warstwy MCP
-└── examples/example_prompts.md  # scenariusze end-to-end na żywym Office
+|- server.py                    # MCP server (stdio), tool registration, Bridge client
+|- bridge/
+|  |- main.py                   # TCP server, JSON-line protocol, routing
+|  |- protocol.py               # Request/Response and line encoding
+|  |- connection_manager.py     # lazy COM connect, STA threads, timeouts
+|  |- controllers/
+|  |  |- base.py                # action routing, com_error mapping, shared helpers
+|  |  |- powerpoint.py          # PowerPointController
+|  |  |- excel.py               # ExcelController
+|  |  |- word.py                # WordController
+|  |- utils/
+|     |- com_helpers.py         # colours, units, Office constants, conversions
+|     |- errors.py              # exception hierarchy
+|- tests/                       # protocol, controller (mocked COM) and MCP layer tests
+|- examples/example_prompts.md  # end to end scenarios for live Office
 ```
 
-## Licencja
+## Licence
 
 MIT
