@@ -87,6 +87,11 @@ PLACEHOLDER_TYPES = {
     16: "date",
 }
 
+# Nazwa pola tekstowego, ktore set_title tworzy na ukladzie bez placeholdera
+# tytulu. Dzieki niej skrot "title" dziala pozniej we wszystkich narzedziach,
+# a nie tylko w tym, ktore ten tytul wstawilo.
+TITLE_FALLBACK_NAME = "office-mcp Title"
+
 CONTENT_PLACEHOLDERS = (2, 4, 6, 7, 8, 12)
 TITLE_PLACEHOLDERS = (1, 3, 5)
 
@@ -234,6 +239,14 @@ class PowerPointController(BaseController):
                 return slide.Shapes.Title
         except com_error:
             pass
+
+        for index in range(1, slide.Shapes.Count + 1):
+            shape = slide.Shapes(index)
+            try:
+                if str(shape.Name) == TITLE_FALLBACK_NAME:
+                    return shape
+            except com_error:
+                continue
         return None
 
     def _placeholder_frame(self, slide: Any, placeholder: Any) -> Any:
@@ -496,6 +509,7 @@ class PowerPointController(BaseController):
         if shape is None:
             shape = slide.Shapes.AddTextbox(MSO_TEXT_HORIZONTAL, 60, 40, 600, 60)
             shape.TextFrame.TextRange.Font.Size = 32
+            shape.Name = TITLE_FALLBACK_NAME
             created = True
 
         shape.TextFrame.TextRange.Text = _paragraph_text(text)
