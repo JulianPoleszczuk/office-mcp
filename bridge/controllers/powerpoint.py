@@ -104,14 +104,49 @@ class PowerPointController(BaseController):
     DISPLAY_NAME = "PowerPoint"
     ALERTS_OFF = 1
 
+    def __init__(self, connection: Any) -> None:
+        super().__init__(connection)
+        # Sciezka prezentacji, na ktorej pracujemy. PowerPoint ignoruje
+        # Windows.Activate(), gdy aplikacja nie jest na wierzchu, wiec
+        # ActivePresentation potrafi wskazywac zupelnie inny plik niz ten,
+        # ktory wlasnie otworzylismy - a wtedy kolejne narzedzia po cichu
+        # edytuja nie ten dokument.
+        self._target_path: str | None = None
+
+    def _remember(self, presentation: Any) -> Any:
+        """Zapamietuje prezentacje jako biezaca dla kolejnych wywolan."""
+        try:
+            self._target_path = (
+                os.path.normcase(str(presentation.FullName))
+                if presentation.Path
+                else None
+            )
+        except com_error:
+            self._target_path = None
+        return presentation
+
     def presentation(self) -> Any:
-        """Aktywna prezentacja albo czytelny blad, gdy nic nie jest otwarte."""
+        """Prezentacja, na ktorej pracujemy - zapamietana, nie 'aktywna'."""
         app = self.app
         if app.Presentations.Count == 0:
             raise DocumentNotFoundError(
                 "Brak otwartej prezentacji - uzyj ppt_create_presentation albo "
                 "ppt_open_presentation"
             )
+
+        if self._target_path:
+            for index in range(1, app.Presentations.Count + 1):
+                candidate = app.Presentations(index)
+                try:
+                    if candidate.Path and (
+                        os.path.normcase(str(candidate.FullName)) == self._target_path
+                    ):
+                        return candidate
+                except com_error:
+                    continue
+            # Zapamietana prezentacja zostala zamknieta poza wtyczka.
+            self._target_path = None
+
         try:
             return app.ActivePresentation
         except com_error:
@@ -245,7 +280,7 @@ class PowerPointController(BaseController):
             presentation.SaveAs(
                 target, save_format_for(target, PP_SAVE_FORMATS, PP_SAVE_FORMATS[".pptx"])
             )
-        return self._presentation_summary(presentation)
+        return self._presentation_summary(self._remember(presentation))
 
     @action("open_presentation")
     def open_presentation(self, path: str) -> dict[str, Any]:
@@ -260,10 +295,16 @@ class PowerPointController(BaseController):
                     presentation.Windows(1).Activate()
                 except com_error:
                     pass
-                return {**self._presentation_summary(presentation), "already_open": True}
+                return {
+                    **self._presentation_summary(self._remember(presentation)),
+                    "already_open": True,
+                }
 
         presentation = app.Presentations.Open(target, ReadOnly=MSO_FALSE, WithWindow=MSO_TRUE)
-        return {**self._presentation_summary(presentation), "already_open": False}
+        return {
+            **self._presentation_summary(self._remember(presentation)),
+            "already_open": False,
+        }
 
     @action("save")
     def save(self, path: str | None = None) -> dict[str, Any]:
@@ -284,7 +325,9 @@ class PowerPointController(BaseController):
         else:
             presentation.Save()
 
-        return self._presentation_summary(presentation)
+        # SaveAs przepina prezentacje na nowy plik - zapamietana sciezka
+        # musi za tym nadazyc, inaczej presentation() jej nie odnajdzie.
+        return self._presentation_summary(self._remember(presentation))
 
     @action("close")
     def close(self, save: bool = True) -> dict[str, Any]:
@@ -302,6 +345,7 @@ class PowerPointController(BaseController):
             presentation.Saved = MSO_TRUE
 
         presentation.Close()
+        self._target_path = None
         return {"closed": name, "saved": bool(save)}
 
     @action("get_presentation_info")
