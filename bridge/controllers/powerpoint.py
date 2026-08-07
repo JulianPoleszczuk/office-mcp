@@ -8,6 +8,7 @@ a pozycje i rozmiary podaje sie w punktach (1 cm = 28.35 pt).
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
 from bridge.controllers.base import BaseController, action
@@ -2000,10 +2001,19 @@ class PowerPointController(BaseController):
             index = self.require_index(
                 slide_index, presentation.Slides.Count, "slide_index"
             )
-            try:
-                presentation.SlideShowWindow.View.GotoSlide(index)
-            except com_error as exc:
-                raise InvalidReferenceError("Pokaz slajdow nie jest uruchomiony") from exc
+            # Tuz po Run() PowerPoint jeszcze buduje okno pokazu i odrzuca
+            # wywolania (RPC_E_CALL_REJECTED) - jedno ponowienie wystarcza.
+            for attempt in range(2):
+                try:
+                    presentation.SlideShowWindow.View.GotoSlide(index)
+                    break
+                except com_error as exc:
+                    if attempt:
+                        raise InvalidReferenceError(
+                            "Pokaz slajdow nie jest uruchomiony albo PowerPoint "
+                            "jeszcze go nie otworzyl"
+                        ) from exc
+                    time.sleep(0.6)
             return {"command": "goto", "slide_index": index, "running": True}
 
         raise InvalidReferenceError(
