@@ -1,18 +1,18 @@
-"""Zarzadzanie polaczeniami COM do aplikacji Office.
+"""Managing COM connections to Office apps.
 
-Zasady, ktore wymusza ten modul:
+Rules this module enforces:
 
-* **leniwe laczenie** - COM startuje dopiero przy pierwszej akcji dla danej
-  aplikacji, nie przy starcie Bridge,
-* **podlaczanie sie do otwartej instancji** - najpierw ``GetActiveObject``,
-  dopiero potem ``Dispatch`` (czyli uzytkownik nie dostaje drugiego okna),
-* **izolacja awarii** - kazda aplikacja ma wlasny watek, wlasny stan i wlasny
-  obiekt polaczenia, wiec zawieszony Word nie blokuje Excela,
-* **timeout** - kazde wywolanie COM ma limit czasu; po jego przekroczeniu
-  watek jest porzucany, a polaczenie oznaczane jako martwe.
+* **lazy connect** - COM starts on the first action for a given app, not when
+  the Bridge starts,
+* **attach to a running instance** - ``GetActiveObject`` first, ``Dispatch``
+  only as a fallback, so the user does not get a second window,
+* **failure isolation** - each app gets its own thread, its own state and its
+  own connection object, so a hung Word does not block Excel,
+* **timeout** - every COM call is time limited; once it is exceeded the thread
+  is abandoned and the connection marked dead.
 
-Wszystkie wywolania COM dla jednej aplikacji ida przez jeden dedykowany watek,
-bo obiekty COM z apartamentu STA nie moga byc uzywane z innych watkow.
+All COM calls for one app go through a single dedicated thread, because COM
+objects from an STA apartment cannot be used from other threads.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ DEFAULT_TIMEOUT = 15.0
 
 @dataclass(frozen=True, slots=True)
 class AppSpec:
-    """Statyczny opis aplikacji Office obslugiwanej przez Bridge."""
+    """Static description of an Office app the Bridge can drive."""
 
     key: str
     prog_id: str
@@ -51,21 +51,21 @@ APP_SPECS: dict[str, AppSpec] = {
 
 
 def ensure_windows() -> None:
-    """Twardy guard - COM Office istnieje wylacznie na Windows."""
+    """Hard guard - Office COM exists on Windows only."""
     if sys.platform != "win32":
         raise ComConnectionError(
-            "office-mcp dziala tylko na Windows - automatyzacja Office opiera sie "
-            f"na COM, ktorego nie ma na platformie '{sys.platform}'."
+            "office-mcp runs on Windows only - Office automation is built on "
+            f"COM, which does not exist on platform '{sys.platform}'."
         )
     if not COM_AVAILABLE:
         raise ComConnectionError(
             "Brak pywin32. Zainstaluj zaleznosci: pip install -r requirements.txt "
-            "oraz uruchom python Scripts/pywin32_postinstall.py -install"
+            "then run python Scripts/pywin32_postinstall.py -install"
         )
 
 
 class AppConnection:
-    """Zywe polaczenie COM do jednej aplikacji Office wraz z jej watkiem STA."""
+    """A live COM connection to one Office app, with its own STA thread."""
 
     def __init__(self, spec: AppSpec, timeout: float = DEFAULT_TIMEOUT) -> None:
         self.spec = spec
@@ -94,7 +94,7 @@ class AppConnection:
         }
 
     def run(self, func: Callable[..., T], *args: Any, timeout: float | None = None) -> T:
-        """Wykonuje ``func`` w watku COM tej aplikacji, pilnujac limitu czasu."""
+        """Runs ``func`` on this app's COM thread, enforcing the time limit."""
         limit = timeout if timeout is not None else self.timeout
         executor = self._ensure_executor()
         future: Future = executor.submit(self._invoke, func, args)
@@ -105,8 +105,8 @@ class AppConnection:
             self._abandon_executor()
             self._last_error = f"Przekroczono limit {limit:.0f}s"
             raise ComTimeoutError(
-                f"{self.spec.display_name} nie odpowiedzial w ciagu {limit:.0f}s - "
-                "aplikacja moze czekac na akcje uzytkownika (otwarte okno dialogowe?)."
+                f"{self.spec.display_name} did not answer within {limit:.0f}s - "
+                "the app may be waiting on the user (an open dialog box?)."
             ) from None
 
     def _invoke(self, func: Callable[..., T], args: tuple[Any, ...]) -> T:
@@ -118,9 +118,9 @@ class AppConnection:
             raise
 
     def application(self) -> Any:
-        """Zwraca obiekt aplikacji COM; laczy sie leniwie przy pierwszym uzyciu.
+        """Returns the COM Application object; connects lazily on first use.
 
-        Wolane wylacznie z watku COM danej aplikacji.
+        Called only from this app's COM thread.
         """
         if self._app is not None:
             if self._is_alive(self._app):
@@ -139,7 +139,7 @@ class AppConnection:
             logger.info("Podlaczono do otwartej instancji %s", self.spec.display_name)
         except com_error:
             logger.info(
-                "%s nie jest otwarty - uruchamiam nowa instancje",
+                "%s is not running - starting a new instance",
                 self.spec.display_name,
             )
         except Exception as exc:  # noqa: BLE001
@@ -152,8 +152,8 @@ class AppConnection:
             except com_error as exc:
                 self._last_error = str(exc)
                 raise ComConnectionError(
-                    f"Nie udalo sie uruchomic {self.spec.display_name}. "
-                    "Sprawdz, czy Office jest zainstalowany i czy aplikacja nie "
+                    f"Could not start {self.spec.display_name}. Check that "
+                    "Office is installed and that the app is not stuck in the "
                     "wisi w tle (Menedzer zadan).",
                     {"prog_id": self.spec.prog_id},
                 ) from exc
@@ -167,7 +167,7 @@ class AppConnection:
         try:
             app.Visible = True
         except Exception as exc:  # noqa: BLE001
-            logger.debug("Nie udalo sie ustawic Visible dla %s: %s", self.spec.key, exc)
+            logger.debug("Could not set Visible on %s: %s", self.spec.key, exc)
 
     def _is_alive(self, app: Any) -> bool:
         try:
@@ -180,7 +180,7 @@ class AppConnection:
         self._app = None
 
     def reset(self) -> None:
-        """Zapomina obiekt COM - kolejne wywolanie polaczy sie od nowa."""
+        """Forgets the COM object - the next call reconnects from scratch."""
         self._drop_reference()
 
     def _ensure_executor(self) -> ThreadPoolExecutor:
@@ -194,7 +194,7 @@ class AppConnection:
             return self._executor
 
     def _abandon_executor(self) -> None:
-        """Porzuca zablokowany watek COM i zaklada, ze polaczenie jest martwe."""
+        """Abandons a stuck COM thread and assumes the connection is dead."""
         with self._lock:
             executor, self._executor = self._executor, None
             self._app = None
@@ -202,7 +202,7 @@ class AppConnection:
             executor.shutdown(wait=False)
 
     def close(self) -> None:
-        """Zamyka watek COM (bez zamykania samej aplikacji Office)."""
+        """Shuts the COM thread down (without closing the Office app itself)."""
         with self._lock:
             executor, self._executor = self._executor, None
             self._app = None
@@ -222,7 +222,7 @@ class ConnectionManager:
         key = app_key.strip().lower()
         spec = APP_SPECS.get(key)
         if spec is None:
-            raise ComConnectionError(f"Nieobslugiwana aplikacja: {app_key!r}")
+            raise ComConnectionError(f"Unsupported app: {app_key!r}")
 
         with self._lock:
             connection = self._connections.get(key)
@@ -259,17 +259,17 @@ class ConnectionManager:
 
 
 def _init_com_apartment() -> None:
-    """Inicjalizuje apartament COM w watku roboczym puli."""
+    """Initialises the COM apartment on a pool worker thread."""
     try:
         import pythoncom
 
         pythoncom.CoInitialize()
-    except Exception as exc:  # noqa: BLE001 - watek dziala dalej, blad wyjdzie przy Dispatch
+    except Exception as exc:  # noqa: BLE001 - thread keeps going, error surfaces at Dispatch
         logger.debug("CoInitialize nieudane: %s", exc)
 
 
 _DISCONNECTED_HRESULTS = {
-    -2147417848,  # RPC_E_DISCONNECTED / obiekt zniknal razem z aplikacja
+    -2147417848,  # RPC_E_DISCONNECTED / object vanished along with the app
     -2147023174,  # RPC server unavailable
     -2147023170,  # RPC failed
     -2146959355,  # CO_E_SERVER_EXEC_FAILURE
@@ -279,6 +279,6 @@ _DISCONNECTED_HRESULTS = {
 
 
 def _is_disconnected(exc: BaseException) -> bool:
-    """Sprawdza, czy blad COM oznacza utrate polaczenia z aplikacja."""
+    """Whether a COM error means the connection to the app was lost."""
     hresult = getattr(exc, "args", (None,))[0]
     return hresult in _DISCONNECTED_HRESULTS

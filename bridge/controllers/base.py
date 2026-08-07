@@ -1,11 +1,11 @@
 """Wspolna logika kontrolerow COM.
 
-Kontroler to cienka warstwa nad obiektem ``Application`` jednej aplikacji
-Office. Metody oznaczone dekoratorem :func:`action` staja sie akcjami
+A controller is a thin layer over one Office app's ``Application`` object.
+Office app. Methods marked with the :func:`action` decorator become Bridge
 protokolu Bridge - reszta klasy to zwykle helpery.
 
-Kazda akcja wykonuje sie w watku COM swojej aplikacji (patrz
-:mod:`bridge.connection_manager`), a wszystkie wyjatki - w tym surowe
+Every action runs on its app's COM thread (see
+:mod:`bridge.connection_manager`), and every exception - including raw
 ``pywintypes.com_error`` - sa tlumaczone na hierarchie z
 :mod:`bridge.utils.errors`.
 """
@@ -37,7 +37,7 @@ ACTION_ATTR = "_bridge_action"
 
 
 def action(name: str | None = None) -> Callable[[F], F]:
-    """Oznacza metode kontrolera jako akcje dostepna przez protokol Bridge."""
+    """Marks a controller method as an action reachable over the Bridge protocol."""
 
     def decorator(func: F) -> F:
         setattr(func, ACTION_ATTR, name or func.__name__)
@@ -55,7 +55,7 @@ _DISCONNECTED = {
 }
 
 _BUSY = {
-    -2147418111,  # RPC_E_CALL_REJECTED - apka zajeta (np. otwarty dialog)
+    -2147418111,  # RPC_E_CALL_REJECTED - app busy (e.g. a dialog is open)
     -2147417846,  # RPC_E_SERVERCALL_RETRYLATER
 }
 
@@ -76,7 +76,7 @@ _FILE_ERRORS = {
 
 
 class BaseController:
-    """Baza kontrolerow - routing akcji, mapowanie bledow, wspolne helpery."""
+    """Controller base - action routing, error mapping, shared helpers."""
 
     APP_KEY: str = ""
     DISPLAY_NAME: str = ""
@@ -87,7 +87,7 @@ class BaseController:
 
     @classmethod
     def actions(cls) -> dict[str, Callable[..., Any]]:
-        """Zwraca mape ``nazwa akcji -> metoda`` zbudowana z dekoratorow."""
+        """Returns an ``action name -> method`` map built from the decorators."""
         cached = cls.__dict__.get("_actions_cache")
         if cached is not None:
             return cached
@@ -104,15 +104,15 @@ class BaseController:
 
     @property
     def app(self) -> Any:
-        """Obiekt ``Application`` - laczy sie leniwie przy pierwszym uzyciu."""
+        """The ``Application`` object - connects lazily on first use."""
         return self.connection.application()
 
     def dispatch(self, action_name: str, params: dict[str, Any]) -> Any:
-        """Wykonuje akcje w watku COM aplikacji i zwraca wynik gotowy do JSON-a."""
+        """Runs the action on the app's COM thread and returns JSON-ready output."""
         handler = self.actions().get(action_name)
         if handler is None:
             raise ProtocolError(
-                f"Nieznana akcja '{action_name}' dla aplikacji {self.APP_KEY}",
+                f"Unknown action '{action_name}' for app {self.APP_KEY}",
                 {"available": sorted(self.actions())},
             )
 
@@ -145,7 +145,7 @@ class BaseController:
             unexpected = set(params) - allowed
             if unexpected:
                 raise ProtocolError(
-                    f"Akcja '{action_name}' nie przyjmuje parametrow: "
+                    f"Action '{action_name}' does not accept parameters: "
                     f"{', '.join(sorted(unexpected))}",
                     {"allowed": sorted(allowed)},
                 )
@@ -158,7 +158,7 @@ class BaseController:
         missing = required - set(params)
         if missing:
             raise ProtocolError(
-                f"Akcja '{action_name}' wymaga parametrow: {', '.join(sorted(missing))}",
+                f"Action '{action_name}' requires parameters: {', '.join(sorted(missing))}",
                 {"required": sorted(required)},
             )
 
@@ -170,18 +170,18 @@ class BaseController:
         except com_error as exc:
             raise self.map_com_error(exc) from exc
         except FileNotFoundError as exc:
-            raise DocumentNotFoundError(f"Nie znaleziono pliku: {exc}") from exc
+            raise DocumentNotFoundError(f"File not found: {exc}") from exc
         except (ValueError, IndexError, KeyError) as exc:
             raise InvalidReferenceError(str(exc) or type(exc).__name__) from exc
         except TypeError as exc:
-            raise ProtocolError(f"Nieprawidlowe argumenty akcji: {exc}") from exc
+            raise ProtocolError(f"Invalid action arguments: {exc}") from exc
         except AttributeError as exc:
             raise UnsupportedOperationError(
-                f"Operacja niedostepna w tej wersji {self.DISPLAY_NAME}: {exc}"
+                f"Operation unavailable in this version of {self.DISPLAY_NAME}: {exc}"
             ) from exc
 
     def map_com_error(self, exc: BaseException) -> BridgeError:
-        """Tlumaczy ``com_error`` na czytelny wyjatek Bridge."""
+        """Translates a ``com_error`` into a readable Bridge exception."""
         args = getattr(exc, "args", ())
         hresult = args[0] if args else None
         description = _com_description(exc)
@@ -190,41 +190,41 @@ class BaseController:
         if hresult in _DISCONNECTED:
             self.connection.reset()
             return ComConnectionError(
-                f"Utracono polaczenie z {self.DISPLAY_NAME} - aplikacja zostala "
-                f"zamknieta lub przestala odpowiadac{suffix}"
+                f"Lost connection to {self.DISPLAY_NAME} - the app was closed "
+                f"or stopped responding{suffix}"
             )
         if hresult in _BUSY:
             return ComConnectionError(
-                f"{self.DISPLAY_NAME} jest zajety i odrzucil wywolanie - zamknij "
-                f"otwarte okno dialogowe i sprobuj ponownie{suffix}"
+                f"{self.DISPLAY_NAME} is busy and rejected the call - close any "
+                f"open dialog box and try again{suffix}"
             )
         if hresult in _BAD_INDEX:
             return InvalidReferenceError(
-                f"Odwolanie poza zakresem w {self.DISPLAY_NAME}{suffix}"
+                f"Reference out of range in {self.DISPLAY_NAME}{suffix}"
             )
         if hresult in _NOT_SUPPORTED:
             return UnsupportedOperationError(
-                f"Operacja nieobslugiwana przez zainstalowana wersje "
+                f"Operation not supported by the installed version of "
                 f"{self.DISPLAY_NAME}{suffix}"
             )
         if hresult in _FILE_ERRORS:
-            return DocumentNotFoundError(f"Plik niedostepny{suffix}")
+            return DocumentNotFoundError(f"File unavailable{suffix}")
 
         message = description or str(exc)
         return BridgeError(
-            f"Blad {self.DISPLAY_NAME}: {message}",
+            f"{self.DISPLAY_NAME} error: {message}",
             {"hresult": hex(hresult & 0xFFFFFFFF) if isinstance(hresult, int) else None},
         )
 
     @contextlib.contextmanager
     def alerts_suppressed(self) -> Iterator[None]:
-        """Wylacza okna dialogowe Office (np. pytanie o nadpisanie pliku)."""
+        """Turns off Office dialog boxes (e.g. the overwrite prompt)."""
         app = self.app
         previous: Any = None
         try:
             previous = app.DisplayAlerts
             app.DisplayAlerts = self.ALERTS_OFF
-        except Exception:  # noqa: BLE001 - PowerPoint bywa kapryzny przy starcie
+        except Exception:  # noqa: BLE001 - PowerPoint can be temperamental at startup
             previous = None
 
         try:
@@ -237,38 +237,38 @@ class BaseController:
                     pass
 
     def resolve_existing_path(self, path: str) -> str:
-        """Sciezka istniejacego pliku albo :class:`DocumentNotFoundError`."""
+        """Path to an existing file, or :class:`DocumentNotFoundError`."""
         try:
             return normalize_path(path, must_exist=True)
         except FileNotFoundError as exc:
-            raise DocumentNotFoundError(f"Nie znaleziono pliku: {exc}") from exc
+            raise DocumentNotFoundError(f"File not found: {exc}") from exc
 
     def resolve_target_path(self, path: str) -> str:
-        """Sciezka do zapisu - katalog nadrzedny musi istniec."""
+        """Path to save to - the parent directory must already exist."""
         resolved = normalize_path(path)
         parent = os.path.dirname(resolved)
         if parent and not os.path.isdir(parent):
-            raise DocumentNotFoundError(f"Katalog docelowy nie istnieje: {parent}")
+            raise DocumentNotFoundError(f"Target directory does not exist: {parent}")
         return resolved
 
     @staticmethod
     def require_index(value: Any, maximum: int, label: str) -> int:
-        """Waliduje indeks 1-based uzywany przez kolekcje COM."""
+        """Validates the 1-based index used by COM collections."""
         try:
             index = int(value)
         except (TypeError, ValueError) as exc:
-            raise InvalidReferenceError(f"{label} musi byc liczba calkowita") from exc
+            raise InvalidReferenceError(f"{label} must be a whole number") from exc
         if index < 1 or index > maximum:
             raise InvalidReferenceError(
-                f"{label} = {index} poza zakresem 1..{maximum}"
+                f"{label} = {index} is outside the range 1..{maximum}"
                 if maximum
-                else f"{label} = {index}, ale dokument jest pusty"
+                else f"{label} = {index}, but the document is empty"
             )
         return index
 
     @action()
     def ping(self) -> dict[str, Any]:
-        """Sprawdza, czy aplikacja odpowiada (wymusza polaczenie COM)."""
+        """Checks that the app responds (forces the COM connection)."""
         app = self.app
         return {
             "app": self.APP_KEY,
@@ -279,19 +279,19 @@ class BaseController:
 
     @action()
     def status(self) -> dict[str, Any]:
-        """Zwraca stan polaczenia bez wymuszania startu aplikacji."""
+        """Returns connection state without forcing the app to start."""
         return self.connection.status()
 
 
 def is_connection_error(exc: BaseException) -> bool:
-    """Czy blad COM dotyczy polaczenia (a nie argumentow wywolania)."""
+    """Whether a COM error is about the connection (not the call arguments)."""
     args = getattr(exc, "args", ())
     hresult = args[0] if args else None
     return hresult in _DISCONNECTED or hresult in _BUSY
 
 
 def to_python_result(value: Any) -> Any:
-    """Rekurencyjnie czysci wynik akcji do postaci serializowalnej w JSON."""
+    """Recursively cleans an action result into a JSON-serialisable form."""
     if isinstance(value, dict):
         return {str(key): to_python_result(item) for key, item in value.items()}
     if isinstance(value, list):
@@ -302,7 +302,7 @@ def to_python_result(value: Any) -> Any:
 
 
 def _com_description(exc: BaseException) -> str:
-    """Wyciaga czytelny opis bledu z ``excepinfo`` wyjatku COM."""
+    """Pulls a readable error description out of a COM exception's ``excepinfo``."""
     args = getattr(exc, "args", ())
     if len(args) >= 3 and isinstance(args[2], (tuple, list)) and len(args[2]) >= 3:
         description = args[2][2]

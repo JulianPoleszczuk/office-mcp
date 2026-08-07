@@ -1,9 +1,9 @@
-"""Konwersje miedzy swiatem Pythona a COM-em Office.
+"""Conversions between the Python world and Office COM.
 
-Zebrane tu sa rzeczy, ktore inaczej powtarzalyby sie w kazdym kontrolerze:
-kolory (Office trzyma je jako BGR, nie RGB), jednostki (punkty / centymetry /
-cale / EMU), stale numeryczne enumow Office oraz oczyszczanie wartosci
-zwracanych przez COM do postaci serializowalnej w JSON.
+Collected here are the things that would otherwise repeat in every controller:
+colours (Office stores them as BGR, not RGB), units (points / centimetres /
+inches / EMU), numeric Office enum constants, and cleaning values returned
+by COM into a JSON-serialisable form.
 """
 
 from __future__ import annotations
@@ -17,10 +17,10 @@ try:
 
     com_error = pywintypes.com_error
     COM_AVAILABLE = True
-except ImportError:  # pragma: no cover - platformy bez pywin32 (CI, testy)
+except ImportError:  # pragma: no cover - platforms without pywin32 (CI, tests)
 
     class com_error(Exception):  # type: ignore[no-redef]
-        """Zaslepka uzywana, gdy pywin32 nie jest dostepny (testy poza Windows)."""
+        """Stand-in used when pywin32 is unavailable (tests off Windows)."""
 
     COM_AVAILABLE = False
 
@@ -53,14 +53,6 @@ NAMED_COLORS: dict[str, tuple[int, int, int]] = {
     "teal": (0, 128, 128),
     "gold": (255, 192, 0),
     "silver": (191, 191, 191),
-    "czarny": (0, 0, 0),
-    "bialy": (255, 255, 255),
-    "czerwony": (255, 0, 0),
-    "zielony": (0, 176, 80),
-    "niebieski": (0, 112, 192),
-    "zolty": (255, 255, 0),
-    "pomaranczowy": (255, 153, 0),
-    "szary": (128, 128, 128),
 }
 
 PP_LAYOUTS: dict[str, int] = {
@@ -585,17 +577,17 @@ WD_SAVE_FORMATS: dict[str, int] = {
 
 
 def parse_color(value: Any) -> int:
-    """Zamienia kolor podany po ludzku na liczbe BGR oczekiwana przez Office.
+    """Turns a human-written colour into the BGR number Office expects.
 
-    Akceptuje ``"#RRGGBB"``, ``"RRGGBB"``, nazwe (``"red"``, ``"czerwony"``),
-    krotke/liste ``(r, g, b)`` oraz gotowa liczbe calkowita RGB.
+    Accepts ``"#RRGGBB"``, ``"RRGGBB"``, a name (``"red"``, ``"navy"``),
+    an ``(r, g, b)`` tuple or list, and a plain RGB integer.
     """
     if value is None:
-        raise ValueError("Kolor nie moze byc pusty")
+        raise ValueError("Colour cannot be empty")
 
     if isinstance(value, (tuple, list)):
         if len(value) != 3:
-            raise ValueError("Kolor jako krotka musi miec dokladnie 3 skladowe RGB")
+            raise ValueError("A colour tuple must have exactly 3 RGB components")
         r, g, b = (int(component) for component in value)
     elif isinstance(value, int):
         r, g, b = (value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF
@@ -608,23 +600,23 @@ def parse_color(value: Any) -> int:
             if len(hex_text) == 3:
                 hex_text = "".join(ch * 2 for ch in hex_text)
             if len(hex_text) != 6:
-                raise ValueError(f"Nieznany kolor: {value!r}")
+                raise ValueError(f"Unknown colour: {value!r}")
             try:
                 r, g, b = (int(hex_text[i : i + 2], 16) for i in (0, 2, 4))
             except ValueError as exc:
-                raise ValueError(f"Nieznany kolor: {value!r}") from exc
+                raise ValueError(f"Unknown colour: {value!r}") from exc
     else:
         raise ValueError(f"Nieobslugiwany typ koloru: {type(value).__name__}")
 
     for component in (r, g, b):
         if not 0 <= component <= 255:
-            raise ValueError("Skladowe koloru musza miescic sie w zakresie 0-255")
+            raise ValueError("Colour components must be within 0-255")
 
     return (b << 16) | (g << 8) | r
 
 
 def bgr_to_hex(value: Any) -> str | None:
-    """Odwrotnosc :func:`parse_color` - z liczby BGR robi ``#RRGGBB``."""
+    """Inverse of :func:`parse_color` - turns a BGR number into ``#RRGGBB``."""
     if value is None:
         return None
     try:
@@ -638,7 +630,7 @@ def bgr_to_hex(value: Any) -> str | None:
 
 
 def points(value: Any, unit: str = "pt") -> float:
-    """Przelicza wartosc na punkty (jednostka pozycjonowania w Office)."""
+    """Converts a value to points (the positioning unit in Office)."""
     number = float(value)
     unit = (unit or "pt").lower()
     if unit in ("pt", "point", "points"):
@@ -651,7 +643,7 @@ def points(value: Any, unit: str = "pt") -> float:
         return number * POINTS_PER_INCH
     if unit in ("emu",):
         return number / EMU_PER_POINT
-    raise ValueError(f"Nieznana jednostka: {unit}")
+    raise ValueError(f"Unknown unit: {unit}")
 
 
 def points_to_emu(value: float) -> int:
@@ -663,7 +655,7 @@ def emu_to_points(value: float) -> float:
 
 
 def to_python(value: Any) -> Any:
-    """Sprowadza wartosc z COM do typu, ktory da sie zserializowac do JSON."""
+    """Reduces a COM value to a type that can be serialised to JSON."""
     if value is None or isinstance(value, (bool, int, str)):
         return value
 
@@ -688,7 +680,7 @@ def to_python(value: Any) -> Any:
 
 
 def to_matrix(values: Any) -> list[list[Any]]:
-    """Normalizuje dane wejsciowe do prostokatnej macierzy 2D (lista list)."""
+    """Normalises input into a rectangular 2D matrix (list of lists)."""
     if values is None:
         return []
 
@@ -720,16 +712,16 @@ def from_com_matrix(value: Any) -> list[list[Any]]:
 
 
 def to_com_matrix(values: Sequence[Sequence[Any]]) -> tuple[tuple[Any, ...], ...]:
-    """Zamienia macierz Pythona na krotke krotek - format przyjmowany przez Excela."""
+    """Turns a Python matrix into a tuple of tuples - the form Excel accepts."""
     return tuple(tuple(row) for row in to_matrix(values))
 
 
 def com_address(target: Any, absolute: bool = True) -> str:
-    """Adres zakresu ($A$1:$C$5) odporny na roznice w dispatchu COM.
+    """Range address ($A$1:$C$5) resilient to COM dispatch differences.
 
-    Zaleznie od tego, czy pywin32 zna typelib danej instancji Excela,
-    ``Range.Address`` bywa metoda albo od razu gotowym tekstem - w arkuszu
-    osadzonym w wykresie PowerPointa jest to wlasnie ten drugi przypadek.
+    Depending on whether pywin32 knows the typelib of a given Excel instance,
+    ``Range.Address`` is either a method or already a string - in the worksheet
+    embedded in a PowerPoint chart it is the latter.
     """
     address = target.Address
     if callable(address):
@@ -741,9 +733,9 @@ def com_address(target: Any, absolute: bool = True) -> str:
 
 
 def normalize_path(path: str, must_exist: bool = False) -> str:
-    """Rozwija ``~``, zmienne srodowiskowe i zwraca sciezke absolutna Windows."""
+    """Expands ``~`` and environment variables, returns an absolute Windows path."""
     if not path or not isinstance(path, str):
-        raise ValueError("Sciezka musi byc niepustym tekstem")
+        raise ValueError("Path must be a non-empty string")
     expanded = os.path.abspath(os.path.expandvars(os.path.expanduser(path.strip())))
     if must_exist and not os.path.isfile(expanded):
         raise FileNotFoundError(expanded)
@@ -751,7 +743,7 @@ def normalize_path(path: str, must_exist: bool = False) -> str:
 
 
 def save_format_for(path: str, formats: dict[str, int], default: int) -> int:
-    """Dobiera stala formatu zapisu Office na podstawie rozszerzenia pliku."""
+    """Picks the Office save-format constant from the file extension."""
     extension = os.path.splitext(path)[1].lower()
     return formats.get(extension, default)
 
@@ -761,20 +753,20 @@ def lookup_constant(
     mapping: dict[str, int],
     label: str,
 ) -> int:
-    """Tlumaczy przyjazna nazwe (``"bar"``, ``"blank"``) na stala numeryczna Office."""
+    """Translates a friendly name (``"bar"``, ``"blank"``) into an Office constant."""
     if isinstance(name, bool):
-        raise ValueError(f"Nieprawidlowa wartosc dla {label}: {name!r}")
+        raise ValueError(f"Invalid value for {label}: {name!r}")
     if isinstance(name, int):
         return name
     if not isinstance(name, str):
-        raise ValueError(f"Nieprawidlowa wartosc dla {label}: {name!r}")
+        raise ValueError(f"Invalid value for {label}: {name!r}")
 
     key = name.strip().lower().replace("-", "_").replace(" ", "_")
     if key in mapping:
         return mapping[key]
 
     available = ", ".join(sorted(mapping))
-    raise ValueError(f"Nieznane {label}: {name!r}. Dostepne: {available}")
+    raise ValueError(f"Unknown {label}: {name!r}. Available: {available}")
 
 
 XL_CATEGORY_AXIS = 1
@@ -793,10 +785,10 @@ def apply_chart_format(
     value_axis_min: float | None = None,
     value_axis_max: float | None = None,
 ) -> dict[str, Any]:
-    """Formatuje wykres - wspolne dla PowerPointa i Excela.
+    """Formats a chart - shared by PowerPoint and Excel.
 
-    Model obiektowy wykresu jest w obu aplikacjach ten sam (pochodzi z Excela),
-    wiec logika siedzi tu, a kontrolery tylko dostarczaja obiekt ``Chart``.
+    The chart object model is the same in both apps (it comes from Excel), so
+    the logic lives here and controllers only supply the ``Chart`` object.
     """
     applied: dict[str, Any] = {}
     series_count = int(chart.SeriesCollection().Count)
@@ -807,9 +799,9 @@ def apply_chart_format(
                 break
             series = chart.SeriesCollection(position)
             rgb = parse_color(color)
-            # Serie slupkowe i kolowe biora kolor z wypelnienia, ale liniowe
-            # i punktowe z obrysu - ustawiamy oba, bo inaczej wykres liniowy
-            # zostaje w domyslnym kolorze motywu mimo "sukcesu" wywolania.
+            # Bar and pie series take their colour from the fill, but line and
+            # scatter series from the outline - we set both, otherwise a line
+            # chart keeps the theme colour despite the call reporting success.
             try:
                 series.Format.Fill.Visible = MSO_TRUE
                 series.Format.Fill.Solid()
@@ -868,9 +860,9 @@ def apply_chart_format(
         except com_error:
             applied["gridlines"] = None
 
-    # Office dobiera zakres osi automatycznie i przy zblizonych wartosciach
-    # potrafi zaczac ja daleko od zera - roznica 522 vs 478 wyglada wtedy
-    # jak dwukrotna. Jawny zakres jest jedynym sposobem, zeby to naprostowac.
+    # Office picks the axis range automatically and, when values are close,
+    # can start it far from zero - a 522 vs 478 gap then looks like double.
+    # An explicit range is the only way to straighten that out.
     if value_axis_min is not None or value_axis_max is not None:
         try:
             axis = chart.Axes(XL_VALUE_AXIS)
@@ -891,8 +883,8 @@ def apply_chart_format(
             lambda: setattr(chart.Legend.Font, "Color", rgb),
             lambda: setattr(chart.ChartTitle.Font, "Color", rgb),
         ]
-        # Etykiety danych maja wlasna czcionke - bez tego zostaja w kolorze
-        # motywu i odcinaja sie od reszty wykresu.
+        # Data labels have their own font - without this they keep the theme
+        # colour and stand out from the rest of the chart.
         for position in range(1, series_count + 1):
             setters.append(
                 lambda index=position: setattr(
@@ -910,10 +902,10 @@ def apply_chart_format(
 
 
 def constant_name(value: Any, mapping: dict[str, int]) -> str | None:
-    """Odwrotnosc :func:`lookup_constant` - z liczby Office robi przyjazna nazwe.
+    """Inverse of :func:`lookup_constant` - turns an Office number into a name.
 
-    Kilka nazw potrafi wskazywac na te sama stala (aliasy w mapach), wiec
-    wybierana jest pierwsza pasujaca w kolejnosci zapisu slownika.
+    Several names can point at the same constant (aliases in the maps), so the
+    first match in dictionary order wins.
     """
     try:
         number = int(value)
@@ -938,9 +930,9 @@ def chunked(items: Iterable[Any], size: int) -> Iterable[list[Any]]:
 
 
 def column_letter(index: int) -> str:
-    """Zamienia numer kolumny (1-based) na oznaczenie literowe Excela."""
+    """Turns a 1-based column number into an Excel column letter."""
     if index < 1:
-        raise ValueError("Numer kolumny musi byc >= 1")
+        raise ValueError("Column number must be >= 1")
     letters = ""
     while index:
         index, remainder = divmod(index - 1, 26)
@@ -949,10 +941,10 @@ def column_letter(index: int) -> str:
 
 
 def column_index(letter: str) -> int:
-    """Zamienia oznaczenie literowe kolumny Excela na numer (1-based)."""
+    """Turns an Excel column letter into a 1-based number."""
     letters = str(letter).strip().upper()
     if not letters.isalpha():
-        raise ValueError(f"Nieprawidlowe oznaczenie kolumny: {letter!r}")
+        raise ValueError(f"Invalid column reference: {letter!r}")
     result = 0
     for char in letters:
         result = result * 26 + (ord(char) - 64)

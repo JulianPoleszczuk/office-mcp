@@ -11,7 +11,7 @@ Response (Bridge -> MCP Server)::
 
     {"id": "uuid", "ok": true, "result": {"slide_index": 2}}
     {"id": "uuid", "ok": false,
-     "error": {"type": "ComConnectionError", "message": "PowerPoint nie odpowiada"}}
+     "error": {"type": "ComConnectionError", "message": "PowerPoint is not responding"}}
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ ENCODING = "utf-8"
 
 @dataclass(slots=True)
 class Request:
-    """Pojedyncze zadanie wykonania akcji przez kontroler danej aplikacji."""
+    """A single request to run an action through one app's controller."""
 
     app: str
     action: str
@@ -51,7 +51,7 @@ class Request:
     @classmethod
     def from_dict(cls, data: Any) -> "Request":
         if not isinstance(data, dict):
-            raise ProtocolError("Request musi byc obiektem JSON")
+            raise ProtocolError("Request must be a JSON object")
 
         app = data.get("app")
         action = data.get("action")
@@ -63,18 +63,18 @@ class Request:
         app = app.strip().lower()
         if app not in KNOWN_APPS:
             raise ProtocolError(
-                f"Nieznana aplikacja '{app}', dozwolone: {', '.join(KNOWN_APPS)}"
+                f"Unknown app '{app}', allowed: {', '.join(KNOWN_APPS)}"
             )
 
         params = data.get("params", {})
         if params is None:
             params = {}
         if not isinstance(params, dict):
-            raise ProtocolError("Pole 'params' musi byc obiektem JSON")
+            raise ProtocolError("Field 'params' must be a JSON object")
 
         request_id = data.get("id")
         if request_id is not None and not isinstance(request_id, str):
-            raise ProtocolError("Pole 'id' musi byc tekstem")
+            raise ProtocolError("Field 'id' must be a string")
 
         return cls(
             app=app,
@@ -90,7 +90,7 @@ class Request:
 
 @dataclass(slots=True)
 class Response:
-    """Odpowiedz Bridge - zawsze albo ``result``, albo ``error``."""
+    """Bridge reply - always carries either ``result`` or ``error``."""
 
     id: str
     ok: bool
@@ -120,14 +120,14 @@ class Response:
     @classmethod
     def from_dict(cls, data: Any) -> "Response":
         if not isinstance(data, dict):
-            raise ProtocolError("Response musi byc obiektem JSON")
+            raise ProtocolError("Response must be a JSON object")
         if "ok" not in data:
             raise ProtocolError("Brak wymaganego pola 'ok'")
 
         ok = bool(data["ok"])
         error = data.get("error")
         if not ok and not isinstance(error, dict):
-            raise ProtocolError("Odpowiedz bledu musi zawierac obiekt 'error'")
+            raise ProtocolError("An error reply must contain an 'error' object")
 
         return cls(
             id=str(data.get("id", "")),
@@ -152,7 +152,7 @@ def decode_line(line: bytes | str) -> Any:
         try:
             line = line.decode(ENCODING)
         except UnicodeDecodeError as exc:
-            raise ProtocolError(f"Linia nie jest poprawnym UTF-8: {exc}") from exc
+            raise ProtocolError(f"Line is not valid UTF-8: {exc}") from exc
 
     line = line.strip()
     if not line:

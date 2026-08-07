@@ -1,12 +1,12 @@
-"""Proces Bridge - serwer TCP (JSON-line) trzymajacy zywe polaczenia COM.
+"""The Bridge process - a TCP server (JSON-line) holding live COM connections.
 
-Uruchomienie recznie (przydatne przy debugowaniu)::
+Run it by hand (useful when debugging)::
 
     python -m bridge.main --port 8765 --log-level DEBUG
 
-Bridge celowo jest osobnym, dlugozyjacym procesem: serwer MCP moze byc
-restartowany przez klienta (Claude Desktop / Claude Code) bez zrywania
-polaczen COM i bez zamykania dokumentow otwartych przez uzytkownika.
+The Bridge is deliberately a separate, long-lived process: the MCP server can
+be restarted by its client (Claude Desktop / Claude Code) without dropping COM
+connections or closing documents the user has open.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ CONTROLLER_TYPES = {
 
 
 class Dispatcher:
-    """Kieruje zadania do kontrolera wlasciwej aplikacji."""
+    """Routes requests to the controller of the right app."""
 
     def __init__(self, timeout: float = DEFAULT_TIMEOUT) -> None:
         self.manager = ConnectionManager(timeout=timeout)
@@ -53,13 +53,13 @@ class Dispatcher:
             if controller is None:
                 controller_type = CONTROLLER_TYPES.get(app_key)
                 if controller_type is None:
-                    raise ProtocolError(f"Nieobslugiwana aplikacja: {app_key!r}")
+                    raise ProtocolError(f"Unsupported app: {app_key!r}")
                 controller = controller_type(self.manager.connection(app_key))
                 self._controllers[app_key] = controller
             return controller
 
     def handle(self, request: Request) -> Response:
-        """Wykonuje zadanie i zawsze zwraca poprawna odpowiedz protokolu."""
+        """Runs the request and always returns a valid protocol reply."""
         try:
             result = self.controller(request.app).dispatch(request.action, request.params)
             return Response.success(request.id, result)
@@ -72,8 +72,8 @@ class Dispatcher:
                 exc.message,
             )
             return Response.failure(request.id, exc)
-        except Exception as exc:  # noqa: BLE001 - Bridge nigdy nie moze wywalic sie na kliencie
-            logger.exception("Nieoczekiwany blad %s.%s", request.app, request.action)
+        except Exception as exc:  # noqa: BLE001 - the Bridge must never die on a client
+            logger.exception("Unexpected error in %s.%s", request.app, request.action)
             return Response.failure(request.id, exc)
 
     def shutdown(self) -> None:
@@ -81,7 +81,7 @@ class Dispatcher:
 
 
 class BridgeRequestHandler(socketserver.StreamRequestHandler):
-    """Obsluga jednego polaczenia TCP - kolejne linie JSON az do rozlaczenia."""
+    """Handles one TCP connection - JSON lines until the client disconnects."""
 
     server: "BridgeServer"
 
@@ -96,7 +96,7 @@ class BridgeRequestHandler(socketserver.StreamRequestHandler):
                 self.wfile.write(response.encode())
                 self.wfile.flush()
         except (ConnectionResetError, BrokenPipeError):
-            logger.info("Klient rozlaczyl sie nagle: %s", peer)
+            logger.info("Client disconnected abruptly: %s", peer)
         finally:
             logger.info("Klient rozlaczony: %s", peer)
 
@@ -138,7 +138,7 @@ def serve(
     port: int = DEFAULT_PORT,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> None:
-    """Startuje Bridge i blokuje watek do przerwania (Ctrl+C)."""
+    """Starts the Bridge and blocks until interrupted (Ctrl+C)."""
     server = BridgeServer(host=host, port=port, timeout=timeout)
     logger.info(
         "Bridge nasluchuje na %s:%s (aplikacje: %s, timeout COM: %.0fs)",

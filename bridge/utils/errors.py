@@ -1,15 +1,15 @@
 """Hierarchia wyjatkow Bridge.
 
-Kontrolery nigdy nie przepuszczaja surowego ``pywintypes.com_error`` do
-warstwy MCP - kazdy blad COM jest mapowany na jeden z ponizszych typow,
-ktore serializuja sie do stabilnego JSON-a (``type`` + ``message``).
+Controllers never let a raw ``pywintypes.com_error`` reach the MCP layer -
+every COM error is mapped to one of the types below, which serialise into
+stable JSON (``type`` + ``message``).
 """
 
 from __future__ import annotations
 
 
 class BridgeError(Exception):
-    """Bazowy wyjatek Bridge - wszystko co leci do klienta dziedziczy po nim."""
+    """Base Bridge exception - everything sent to the client inherits from it."""
 
     def __init__(self, message: str, details: dict | None = None) -> None:
         super().__init__(message)
@@ -28,19 +28,19 @@ class BridgeError(Exception):
 
 
 class ComConnectionError(BridgeError):
-    """Aplikacja Office niedostepna, zamknieta w trakcie pracy albo nie odpowiada."""
+    """Office app unavailable, closed mid-operation or not responding."""
 
 
 class DocumentNotFoundError(BridgeError):
-    """Plik nie istnieje albo zadany dokument nie jest otwarty."""
+    """File does not exist, or the requested document is not open."""
 
 
 class InvalidReferenceError(BridgeError):
-    """Zly indeks slajdu/akapitu, nieistniejacy arkusz, adres komorki poza zakresem."""
+    """Bad slide/paragraph index, missing sheet, cell address out of range."""
 
 
 class UnsupportedOperationError(BridgeError):
-    """Operacja nieobslugiwana przez dana wersje Office (np. brak funkcji w 2019)."""
+    """Operation unsupported by this Office version (e.g. missing in 2019)."""
 
 
 class ProtocolError(BridgeError):
@@ -48,7 +48,7 @@ class ProtocolError(BridgeError):
 
 
 class TimeoutError_(BridgeError):
-    """Wywolanie COM przekroczylo limit czasu - aplikacja prawdopodobnie wisi."""
+    """A COM call exceeded its time limit - the app is probably hung."""
 
     @property
     def type_name(self) -> str:
