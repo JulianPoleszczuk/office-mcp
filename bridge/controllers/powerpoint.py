@@ -13,10 +13,12 @@ from typing import Any
 from bridge.controllers.base import BaseController, action
 from bridge.utils.com_helpers import (
     CHART_TYPES,
+    MSO_ALIGN,
     MSO_ANCHORS,
     MSO_ANIM_EFFECTS,
     MSO_ANIM_LEVELS,
     MSO_ANIM_TRIGGERS,
+    MSO_DISTRIBUTE,
     MSO_GRADIENT_STYLES,
     MSO_LINE_DASHES,
     MSO_THEME_COLORS,
@@ -49,6 +51,11 @@ MSO_FALSE = 0
 
 MSO_THEME_LATIN = 1
 MSO_SHADOW_OUTER = 2
+PP_MOUSE_CLICK = 1
+PP_ACTION_HYPERLINK = 7
+PP_ACTION_NONE = 0
+MSO_ANIM_MEDIA_PLAY = 83
+MSO_SMARTART_NODE_BELOW = 5
 PP_AUTOSIZE_NONE = 0
 PP_AUTOSIZE_FIT = 1
 XL_CATEGORY_AXIS = 1
@@ -510,16 +517,7 @@ class PowerPointController(BaseController):
         slide = self.slide(slide_index)
         frame = self._placeholder_frame(slide, placeholder)
 
-        entries: list[tuple[str, int]] = []
-        for item in items:
-            if isinstance(item, dict):
-                text = str(item.get("text", ""))
-                level = int(item.get("level", 1))
-            elif isinstance(item, (list, tuple)) and len(item) == 2:
-                text, level = str(item[0]), int(item[1])
-            else:
-                text, level = str(item), 1
-            entries.append((text, max(1, min(level, 5))))
+        entries = _normalize_outline(items)
 
         text_range = frame.TextRange
         text_range.Text = "\r".join(text for text, _ in entries)
@@ -1148,6 +1146,236 @@ class PowerPointController(BaseController):
             "size_bytes": os.path.getsize(target) if os.path.isfile(target) else None,
         }
 
+    def _shape_range(self, slide: Any, shape_ids: Any, minimum: int = 2) -> Any:
+        """``ShapeRange`` z listy id/nazw - podstawa grupowania i wyrownywania."""
+        if not isinstance(shape_ids, (list, tuple)) or len(shape_ids) < minimum:
+            raise InvalidReferenceError(
+                f"Podaj liste co najmniej {minimum} ksztaltow (id albo nazw)"
+            )
+
+        indexes: list[int] = []
+        for shape_id in shape_ids:
+            wanted = self._resolve_shape(slide, shape_id)
+            for index in range(1, slide.Shapes.Count + 1):
+                if int(slide.Shapes(index).Id) == int(wanted.Id):
+                    indexes.append(index)
+                    break
+
+        if len(indexes) < minimum:
+            raise InvalidReferenceError(
+                f"Znaleziono tylko {len(indexes)} z {len(shape_ids)} wskazanych ksztaltow"
+            )
+        return slide.Shapes.Range(indexes)
+
+    @action("group_shapes")
+    def group_shapes(
+        self, slide_index: int, shape_ids: list[Any], name: str | None = None
+    ) -> dict[str, Any]:
+        """Laczy ksztalty w grupe - odtad ruszaja sie i animuja jako calosc."""
+        slide = self.slide(slide_index)
+        group = self._shape_range(slide, shape_ids).Group()
+
+        if name:
+            group.Name = str(name)
+
+        self._goto_slide(int(slide_index))
+        return {
+            "slide_index": int(slide_index),
+            "shape_id": int(group.Id),
+            "name": to_python(group.Name),
+            "grouped": len(shape_ids),
+        }
+
+    @action("ungroup_shapes")
+    def ungroup_shapes(self, slide_index: int, shape_id: Any) -> dict[str, Any]:
+        """Rozbija grupe na pojedyncze ksztalty."""
+        slide = self.slide(slide_index)
+        group = self._resolve_shape(slide, shape_id)
+
+        try:
+            parts = group.Ungroup()
+        except com_error as exc:
+            raise InvalidReferenceError(
+                f"Ksztalt {shape_id!r} nie jest grupa"
+            ) from exc
+
+        return {
+            "slide_index": int(slide_index),
+            "shapes": [int(parts(i).Id) for i in range(1, int(parts.Count) + 1)],
+            "count": int(parts.Count),
+        }
+
+    @action("align_shapes")
+    def align_shapes(
+        self,
+        slide_index: int,
+        shape_ids: list[Any],
+        align: str,
+        relative_to_slide: bool = False,
+    ) -> dict[str, Any]:
+        """Wyrownuje ksztalty: left, center, right, top, middle, bottom.
+
+        ``relative_to_slide=True`` wyrownuje wzgledem krawedzi slajdu, a nie
+        wzgledem siebie nawzajem.
+        """
+        slide = self.slide(slide_index)
+        shape_range = self._shape_range(
+            slide, shape_ids, minimum=1 if relative_to_slide else 2
+        )
+        shape_range.Align(
+            lookup_constant(align, MSO_ALIGN, "align"),
+            MSO_TRUE if relative_to_slide else MSO_FALSE,
+        )
+
+        self._goto_slide(int(slide_index))
+        return {
+            "slide_index": int(slide_index),
+            "align": align,
+            "shapes": len(shape_ids),
+            "relative_to_slide": bool(relative_to_slide),
+        }
+
+    @action("distribute_shapes")
+    def distribute_shapes(
+        self,
+        slide_index: int,
+        shape_ids: list[Any],
+        direction: str = "horizontal",
+        relative_to_slide: bool = False,
+    ) -> dict[str, Any]:
+        """Rozklada ksztalty w rownych odstepach w poziomie albo w pionie."""
+        slide = self.slide(slide_index)
+        shape_range = self._shape_range(slide, shape_ids, minimum=3)
+        shape_range.Distribute(
+            lookup_constant(direction, MSO_DISTRIBUTE, "direction"),
+            MSO_TRUE if relative_to_slide else MSO_FALSE,
+        )
+
+        self._goto_slide(int(slide_index))
+        return {
+            "slide_index": int(slide_index),
+            "direction": direction,
+            "shapes": len(shape_ids),
+            "relative_to_slide": bool(relative_to_slide),
+        }
+
+    @action("add_hyperlink")
+    def add_hyperlink(
+        self,
+        slide_index: int,
+        shape_id: Any,
+        url: str | None = None,
+        target_slide: int | None = None,
+        tooltip: str | None = None,
+    ) -> dict[str, Any]:
+        """Podpina pod ksztalt link - zewnetrzny (``url``) albo do slajdu.
+
+        Podanie samego ``tooltip`` bez ``url``/``target_slide`` nie ma sensu,
+        bo podpowiedz pokazuje sie tylko przy aktywnym linku.
+        """
+        if url and target_slide is not None:
+            raise InvalidReferenceError("Podaj 'url' albo 'target_slide', nie oba")
+        if not url and target_slide is None:
+            raise InvalidReferenceError("Podaj 'url' albo 'target_slide'")
+
+        presentation = self.presentation()
+        slide = self.slide(slide_index)
+        shape = self._resolve_shape(slide, shape_id)
+
+        settings = shape.ActionSettings(PP_MOUSE_CLICK)
+        settings.Action = PP_ACTION_HYPERLINK
+        hyperlink = settings.Hyperlink
+
+        if url:
+            hyperlink.Address = str(url)
+            hyperlink.SubAddress = ""
+            applied: dict[str, Any] = {"url": str(url)}
+        else:
+            index = self.require_index(
+                target_slide, presentation.Slides.Count, "target_slide"
+            )
+            target = presentation.Slides(index)
+            title_shape = self._title_shape(target)
+            title = ""
+            if title_shape is not None:
+                try:
+                    title = str(title_shape.TextFrame.TextRange.Text)
+                except com_error:
+                    title = ""
+            hyperlink.Address = ""
+            hyperlink.SubAddress = f"{int(target.SlideID)},{index},{title}"
+            applied = {"target_slide": index, "target_title": title or None}
+
+        if tooltip:
+            hyperlink.ScreenTip = str(tooltip)
+            applied["tooltip"] = str(tooltip)
+
+        self._goto_slide(int(slide_index))
+        return {
+            "slide_index": int(slide_index),
+            "shape_id": int(shape.Id),
+            **applied,
+        }
+
+    @action("set_headers_footers")
+    def set_headers_footers(
+        self,
+        slide_index: int | None = None,
+        footer_text: str | None = None,
+        show_footer: bool | None = None,
+        show_slide_number: bool | None = None,
+        show_date: bool | None = None,
+    ) -> dict[str, Any]:
+        """Stopka, numer slajdu i data; bez ``slide_index`` na wszystkich slajdach.
+
+        Podanie samego ``footer_text`` wlacza stopke - inaczej ustawiony tekst
+        byloby widac dopiero po recznym zaznaczeniu pola w PowerPoincie.
+        """
+        if all(
+            value is None
+            for value in (footer_text, show_footer, show_slide_number, show_date)
+        ):
+            raise InvalidReferenceError("Nie podano zadnego pola do zmiany")
+
+        presentation = self.presentation()
+        if slide_index is None:
+            indexes = list(range(1, presentation.Slides.Count + 1))
+        else:
+            indexes = [
+                self.require_index(slide_index, presentation.Slides.Count, "slide_index")
+            ]
+
+        text_on_master = False
+        for index in indexes:
+            headers = presentation.Slides(index).HeadersFooters
+            if footer_text is not None:
+                try:
+                    headers.Footer.Text = _paragraph_text(footer_text)
+                except com_error:
+                    # Uklad bez placeholdera stopki (np. "blank") odrzuca zapis
+                    # tekstu na slajdzie - tekst zyje wtedy na wzorcu.
+                    presentation.SlideMaster.HeadersFooters.Footer.Text = (
+                        _paragraph_text(footer_text)
+                    )
+                    text_on_master = True
+                if show_footer is None:
+                    headers.Footer.Visible = MSO_TRUE
+            if show_footer is not None:
+                headers.Footer.Visible = MSO_TRUE if show_footer else MSO_FALSE
+            if show_slide_number is not None:
+                headers.SlideNumber.Visible = MSO_TRUE if show_slide_number else MSO_FALSE
+            if show_date is not None:
+                headers.DateAndTime.Visible = MSO_TRUE if show_date else MSO_FALSE
+
+        return {
+            "slides": indexes,
+            "footer_text": footer_text,
+            "show_footer": show_footer,
+            "show_slide_number": show_slide_number,
+            "show_date": show_date,
+            "text_on_master": text_on_master,
+        }
+
     def _theme(self) -> Any:
         """Motyw wzorca slajdow - jedno miejsce, z ktorego zyje cala kolorystyka."""
         return self.presentation().SlideMaster.Theme
@@ -1570,6 +1798,344 @@ class PowerPointController(BaseController):
             "applied": applied,
         }
 
+    @action("add_media")
+    def add_media(
+        self,
+        slide_index: int,
+        media_path: str,
+        left: float,
+        top: float,
+        width: float | None = None,
+        height: float | None = None,
+        autoplay: bool = False,
+    ) -> dict[str, Any]:
+        """Wstawia wideo albo dzwiek jako obiekt osadzony w prezentacji.
+
+        ``autoplay=True`` dopina do slajdu efekt odtwarzania startujacy razem
+        z poprzednim, zamiast czekac na klikniecie.
+        """
+        slide = self.slide(slide_index)
+        target = self.resolve_existing_path(media_path)
+
+        try:
+            shape = slide.Shapes.AddMediaObject2(
+                FileName=target,
+                LinkToFile=MSO_FALSE,
+                SaveWithDocument=MSO_TRUE,
+                Left=float(left),
+                Top=float(top),
+                Width=float(width) if width is not None else -1,
+                Height=float(height) if height is not None else -1,
+            )
+        except (com_error, AttributeError):
+            shape = slide.Shapes.AddMediaObject(
+                target,
+                float(left),
+                float(top),
+                float(width) if width is not None else -1,
+                float(height) if height is not None else -1,
+            )
+
+        media_type = None
+        try:
+            media_type = {2: "sound", 3: "movie"}.get(int(shape.MediaType), "other")
+        except com_error:
+            pass
+
+        if autoplay:
+            try:
+                slide.TimeLine.MainSequence.AddEffect(
+                    Shape=shape,
+                    effectId=MSO_ANIM_MEDIA_PLAY,
+                    Level=0,
+                    trigger=MSO_ANIM_TRIGGERS["with_previous"],
+                )
+            except com_error:
+                pass
+
+        self._goto_slide(int(slide_index))
+        return {
+            "slide_index": int(slide_index),
+            "shape_id": int(shape.Id),
+            "media_type": media_type,
+            "path": target,
+            "width": round(float(shape.Width), 2),
+            "height": round(float(shape.Height), 2),
+            "autoplay": bool(autoplay),
+        }
+
+    @action("list_smartart_layouts")
+    def list_smartart_layouts(
+        self, search: str | None = None, category: str | None = None
+    ) -> dict[str, Any]:
+        """Dostepne uklady SmartArt: klucz, nazwa i kategoria.
+
+        ``name`` jest zlokalizowane (polski Office zwraca "Podstawowa lista
+        blokowa"), wiec do wyboru ukladu lepiej uzywac ``key`` - koncowki
+        identyfikatora URN, ktora jest ta sama we wszystkich wersjach jezykowych.
+        Kategorie tez sa niezalezne od jezyka: list, process, cycle, hierarchy,
+        relationship, matrix, pyramid, picture.
+        """
+        layouts = self.app.SmartArtLayouts
+        needle = str(search).strip().lower() if search else None
+        wanted_category = str(category).strip().lower() if category else None
+
+        found: list[dict[str, Any]] = []
+        for index in range(1, int(layouts.Count) + 1):
+            entry = self._smartart_entry(layouts(index), index)
+            if wanted_category and entry["category"] != wanted_category:
+                continue
+            if needle and needle not in entry["key"].lower() and (
+                needle not in str(entry["name"]).lower()
+            ):
+                continue
+            found.append(entry)
+
+        return {"count": len(found), "total": int(layouts.Count), "layouts": found}
+
+    @staticmethod
+    def _smartart_entry(layout: Any, index: int) -> dict[str, Any]:
+        identifier = str(to_python(layout.Id) or "")
+        return {
+            "index": index,
+            "key": identifier.rsplit("/", 1)[-1] if identifier else "",
+            "name": to_python(layout.Name),
+            "category": str(to_python(getattr(layout, "Category", "")) or "").lower(),
+        }
+
+    def _smartart_layout(self, layout: Any) -> Any:
+        """Uklad SmartArt po numerze, kluczu URN albo nazwie (takze zlokalizowanej)."""
+        layouts = self.app.SmartArtLayouts
+        if isinstance(layout, int) or str(layout).strip().isdigit():
+            index = self.require_index(layout, int(layouts.Count), "layout")
+            return layouts(index)
+
+        needle = str(layout).strip().lower()
+        entries = [
+            (self._smartart_entry(layouts(index), index), layouts(index))
+            for index in range(1, int(layouts.Count) + 1)
+        ]
+
+        for match in (
+            lambda entry: entry["key"].lower() == needle,
+            lambda entry: str(entry["name"]).strip().lower() == needle,
+            lambda entry: needle in entry["key"].lower(),
+            lambda entry: needle in str(entry["name"]).lower(),
+        ):
+            for entry, com_layout in entries:
+                if match(entry):
+                    return com_layout
+
+        raise InvalidReferenceError(
+            f"Nie znaleziono ukladu SmartArt pasujacego do {layout!r}. Nazwy sa "
+            "zlokalizowane - uzyj ppt_list_smartart_layouts, zeby poznac klucze "
+            "(np. 'bProcess3', 'hierarchy1') albo filtruj po kategorii."
+        )
+
+    @action("add_smartart")
+    def add_smartart(
+        self,
+        slide_index: int,
+        layout: Any,
+        items: list[Any],
+        left: float,
+        top: float,
+        width: float,
+        height: float,
+    ) -> dict[str, Any]:
+        """Wstawia diagram SmartArt i wypelnia go tekstem.
+
+        ``items`` przyjmuje liste tekstow albo slownikow
+        ``{"text": ..., "level": 1}`` - poziom 2 i wyzszy tworzy podwezly.
+        """
+        slide = self.slide(slide_index)
+        chosen = self._smartart_layout(layout)
+        shape = slide.Shapes.AddSmartArt(
+            chosen, float(left), float(top), float(width), float(height)
+        )
+
+        entries = _normalize_outline(items)
+        smart_art = shape.SmartArt
+
+        while int(smart_art.AllNodes.Count) > 0:
+            smart_art.AllNodes.Item(1).Delete()
+
+        # Podwezly powstaja przez AddNode(below) na rodzicu. Demote() na wezle
+        # z AllNodes.Add() czesc ukladow (np. hierarchy1) odrzuca komunikatem
+        # "operacja nie jest obslugiwana przez biezacy obiekt".
+        last_at_level: dict[int, Any] = {}
+        added = 0
+        for text, level in entries:
+            parent = last_at_level.get(level - 1) if level > 1 else None
+            if parent is None:
+                node = smart_art.AllNodes.Add()
+                level = 1
+            else:
+                node = parent.AddNode(MSO_SMARTART_NODE_BELOW)
+
+            node.TextFrame2.TextRange.Text = _paragraph_text(text)
+            last_at_level[level] = node
+            for deeper in [key for key in last_at_level if key > level]:
+                del last_at_level[deeper]
+            added += 1
+
+        self._goto_slide(int(slide_index))
+        return {
+            "slide_index": int(slide_index),
+            "shape_id": int(shape.Id),
+            "layout": to_python(chosen.Name),
+            "nodes": added,
+        }
+
+    @action("list_sections")
+    def list_sections(self) -> dict[str, Any]:
+        """Sekcje prezentacji wraz z zakresem slajdow."""
+        properties = self.presentation().SectionProperties
+        count = int(properties.Count)
+
+        return {
+            "count": count,
+            "sections": [
+                {
+                    "index": index,
+                    "name": to_python(properties.Name(index)),
+                    "first_slide": int(properties.FirstSlide(index)),
+                    "slides": int(properties.SlidesCount(index)),
+                }
+                for index in range(1, count + 1)
+            ],
+        }
+
+    @action("add_section")
+    def add_section(self, name: str, before_slide: int = 1) -> dict[str, Any]:
+        """Zaklada sekcje zaczynajaca sie od wskazanego slajdu."""
+        presentation = self.presentation()
+        index = self.require_index(
+            before_slide, presentation.Slides.Count, "before_slide"
+        )
+        section_index = presentation.SectionProperties.AddBeforeSlide(index, str(name))
+
+        return {
+            "section_index": int(section_index),
+            "name": str(name),
+            "first_slide": index,
+        }
+
+    @action("delete_section")
+    def delete_section(
+        self, section_index: int, delete_slides: bool = False
+    ) -> dict[str, Any]:
+        """Usuwa sekcje; ``delete_slides=True`` kasuje tez jej slajdy."""
+        presentation = self.presentation()
+        properties = presentation.SectionProperties
+        index = self.require_index(section_index, int(properties.Count), "section_index")
+        name = to_python(properties.Name(index))
+
+        properties.Delete(index, MSO_TRUE if delete_slides else MSO_FALSE)
+
+        return {
+            "deleted": index,
+            "name": name,
+            "slides_deleted": bool(delete_slides),
+            "sections_left": int(properties.Count),
+            "slide_count": int(presentation.Slides.Count),
+        }
+
+    @action("slideshow")
+    def slideshow(
+        self, command: str = "start", slide_index: int | None = None
+    ) -> dict[str, Any]:
+        """Steruje pokazem: ``start``, ``stop`` albo ``goto`` (z ``slide_index``)."""
+        presentation = self.presentation()
+        wanted = str(command).strip().lower()
+
+        if wanted == "start":
+            settings = presentation.SlideShowSettings
+            if slide_index is not None:
+                index = self.require_index(
+                    slide_index, presentation.Slides.Count, "slide_index"
+                )
+                settings.RangeType = 2  # ppShowSlideRange
+                settings.StartingSlide = index
+                settings.EndingSlide = int(presentation.Slides.Count)
+            settings.Run()
+            return {"command": "start", "running": True}
+
+        if wanted in ("stop", "exit", "end"):
+            try:
+                presentation.SlideShowWindow.View.Exit()
+            except com_error as exc:
+                raise InvalidReferenceError("Pokaz slajdow nie jest uruchomiony") from exc
+            return {"command": "stop", "running": False}
+
+        if wanted == "goto":
+            if slide_index is None:
+                raise InvalidReferenceError("'goto' wymaga parametru slide_index")
+            index = self.require_index(
+                slide_index, presentation.Slides.Count, "slide_index"
+            )
+            try:
+                presentation.SlideShowWindow.View.GotoSlide(index)
+            except com_error as exc:
+                raise InvalidReferenceError("Pokaz slajdow nie jest uruchomiony") from exc
+            return {"command": "goto", "slide_index": index, "running": True}
+
+        raise InvalidReferenceError(
+            f"Nieznana komenda: {command!r}. Dostepne: start, stop, goto"
+        )
+
+    @action("copy_slide_to")
+    def copy_slide_to(
+        self, slide_index: int, target_path: str, position: int | None = None
+    ) -> dict[str, Any]:
+        """Kopiuje slajd do innej prezentacji (istniejacego pliku .pptx).
+
+        Uzywa ``Slides.InsertFromFile``, a nie schowka - schowek bywa zajety
+        przez uzytkownika i psuje wynik w nieprzewidywalny sposob.
+        """
+        presentation = self.presentation()
+        index = self.require_index(slide_index, presentation.Slides.Count, "slide_index")
+        target = self.resolve_existing_path(target_path)
+
+        if not presentation.Path:
+            raise DocumentNotFoundError(
+                "Zrodlowa prezentacja nie ma jeszcze pliku - zapisz ja przez ppt_save"
+            )
+        source = str(presentation.FullName)
+        if os.path.normcase(source) == os.path.normcase(target):
+            raise InvalidReferenceError(
+                "Zrodlo i cel to ten sam plik - uzyj ppt_duplicate_slide"
+            )
+
+        with self.alerts_suppressed():
+            presentation.Save()
+
+        app = self.app
+        opened = None
+        for i in range(1, app.Presentations.Count + 1):
+            if os.path.normcase(str(app.Presentations(i).FullName)) == os.path.normcase(target):
+                opened = app.Presentations(i)
+                break
+        destination = opened or app.Presentations.Open(
+            target, ReadOnly=MSO_FALSE, WithWindow=MSO_TRUE
+        )
+
+        where = int(destination.Slides.Count) if position is None else max(
+            0, self.require_index(position, int(destination.Slides.Count) + 1, "position") - 1
+        )
+        inserted = destination.Slides.InsertFromFile(source, where, index, index)
+
+        with self.alerts_suppressed():
+            destination.Save()
+
+        return {
+            "source_slide": index,
+            "target_path": target,
+            "inserted_at": int(where) + 1,
+            "target_slide_count": int(destination.Slides.Count),
+            "slides_inserted": int(inserted),
+        }
+
     def _resolve_shape(self, slide: Any, shape_id: Any) -> Any:
         """Ksztalt po id/nazwie, ale rozumie tez ``title`` i ``content``."""
         if isinstance(shape_id, str):
@@ -1756,6 +2322,28 @@ class PowerPointController(BaseController):
             "advance_on_click": bool(advance_on_click),
             "advance_after": float(advance_after) if advance_after is not None else None,
         }
+
+
+def _normalize_outline(items: Any) -> list[tuple[str, int]]:
+    """Sprowadza liste punktow do par ``(tekst, poziom)``.
+
+    Przyjmuje same teksty (``"Punkt"``), slowniki (``{"text": ..., "level": 2}``)
+    oraz pary ``("Punkt", 2)``. Poziom jest przycinany do zakresu 1-5.
+    """
+    if not isinstance(items, (list, tuple)) or not items:
+        raise ValueError("Lista 'items' nie moze byc pusta")
+
+    entries: list[tuple[str, int]] = []
+    for item in items:
+        if isinstance(item, dict):
+            text = str(item.get("text", ""))
+            level = int(item.get("level", 1))
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            text, level = str(item[0]), int(item[1])
+        else:
+            text, level = str(item), 1
+        entries.append((text, max(1, min(level, 5))))
+    return entries
 
 
 def _paragraph_text(text: Any) -> str:

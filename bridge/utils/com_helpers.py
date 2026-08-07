@@ -243,6 +243,22 @@ PP_TRANSITIONS: dict[str, int] = {
     "morph_by_char": 3956,
 }
 
+MSO_ALIGN: dict[str, int] = {
+    "left": 0,
+    "center": 1,
+    "right": 2,
+    "top": 3,
+    "middle": 4,
+    "bottom": 5,
+}
+
+MSO_DISTRIBUTE: dict[str, int] = {
+    "horizontal": 0,
+    "horizontally": 0,
+    "vertical": 1,
+    "vertically": 1,
+}
+
 MSO_THEME_COLORS: dict[str, int] = {
     "dark1": 1,
     "text1": 13,

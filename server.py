@@ -596,6 +596,246 @@ def ppt_add_shape(
 
 
 @server.tool()
+def ppt_group_shapes(
+    slide_index: int, shape_ids: list[Any], name: str | None = None
+) -> dict[str, Any]:
+    """Laczy ksztalty w grupe - odtad ruszaja sie, skaluja i animuja jako calosc.
+    Wymaga co najmniej dwoch ksztaltow."""
+    return call_bridge(
+        "powerpoint",
+        "group_shapes",
+        {"slide_index": slide_index, "shape_ids": shape_ids, "name": name},
+    )
+
+
+@server.tool()
+def ppt_ungroup_shapes(slide_index: int, shape_id: Any) -> dict[str, Any]:
+    """Rozbija grupe na pojedyncze ksztalty i zwraca ich id."""
+    return call_bridge(
+        "powerpoint",
+        "ungroup_shapes",
+        {"slide_index": slide_index, "shape_id": shape_id},
+    )
+
+
+@server.tool()
+def ppt_align_shapes(
+    slide_index: int,
+    shape_ids: list[Any],
+    align: str,
+    relative_to_slide: bool = False,
+) -> dict[str, Any]:
+    """Wyrownuje ksztalty: left, center, right, top, middle, bottom.
+    'relative_to_slide=True' wyrownuje do krawedzi slajdu zamiast do siebie."""
+    return call_bridge(
+        "powerpoint",
+        "align_shapes",
+        {
+            "slide_index": slide_index,
+            "shape_ids": shape_ids,
+            "align": align,
+            "relative_to_slide": relative_to_slide,
+        },
+    )
+
+
+@server.tool()
+def ppt_distribute_shapes(
+    slide_index: int,
+    shape_ids: list[Any],
+    direction: str = "horizontal",
+    relative_to_slide: bool = False,
+) -> dict[str, Any]:
+    """Rozklada co najmniej trzy ksztalty w rownych odstepach - horizontal
+    albo vertical."""
+    return call_bridge(
+        "powerpoint",
+        "distribute_shapes",
+        {
+            "slide_index": slide_index,
+            "shape_ids": shape_ids,
+            "direction": direction,
+            "relative_to_slide": relative_to_slide,
+        },
+    )
+
+
+@server.tool()
+def ppt_add_hyperlink(
+    slide_index: int,
+    shape_id: Any,
+    url: str | None = None,
+    target_slide: int | None = None,
+    tooltip: str | None = None,
+) -> dict[str, Any]:
+    """Podpina pod ksztalt link: zewnetrzny adres ('url') albo skok do slajdu
+    w tej prezentacji ('target_slide'). 'tooltip' to podpowiedz przy najechaniu."""
+    return call_bridge(
+        "powerpoint",
+        "add_hyperlink",
+        {
+            "slide_index": slide_index,
+            "shape_id": shape_id,
+            "url": url,
+            "target_slide": target_slide,
+            "tooltip": tooltip,
+        },
+    )
+
+
+@server.tool()
+def ppt_set_headers_footers(
+    slide_index: int | None = None,
+    footer_text: str | None = None,
+    show_footer: bool | None = None,
+    show_slide_number: bool | None = None,
+    show_date: bool | None = None,
+) -> dict[str, Any]:
+    """Stopka, numer slajdu i data. Bez 'slide_index' obejmuje wszystkie slajdy.
+    Sam 'footer_text' automatycznie wlacza widocznosc stopki."""
+    return call_bridge(
+        "powerpoint",
+        "set_headers_footers",
+        {
+            "slide_index": slide_index,
+            "footer_text": footer_text,
+            "show_footer": show_footer,
+            "show_slide_number": show_slide_number,
+            "show_date": show_date,
+        },
+    )
+
+
+@server.tool()
+def ppt_add_media(
+    slide_index: int,
+    media_path: str,
+    left: float,
+    top: float,
+    width: float | None = None,
+    height: float | None = None,
+    autoplay: bool = False,
+) -> dict[str, Any]:
+    """Wstawia wideo albo dzwiek osadzony w prezentacji. 'autoplay=True' dopina
+    efekt odtwarzania startujacy razem z poprzednim zamiast na klikniecie."""
+    return call_bridge(
+        "powerpoint",
+        "add_media",
+        {
+            "slide_index": slide_index,
+            "media_path": media_path,
+            "left": left,
+            "top": top,
+            "width": width,
+            "height": height,
+            "autoplay": autoplay,
+        },
+    )
+
+
+@server.tool()
+def ppt_list_smartart_layouts(
+    search: str | None = None, category: str | None = None
+) -> dict[str, Any]:
+    """Uklady SmartArt: klucz, nazwa i kategoria. UWAGA: 'name' jest
+    zlokalizowane (polski Office zwraca "Podstawowa lista blokowa"), wiec do
+    wyboru ukladu uzywaj 'key' - jest identyczny we wszystkich wersjach
+    jezykowych. 'category' tez nie jest tlumaczona: list, process, cycle,
+    hierarchy, relationship, matrix, pyramid, picture."""
+    return call_bridge(
+        "powerpoint",
+        "list_smartart_layouts",
+        {"search": search, "category": category},
+    )
+
+
+@server.tool()
+def ppt_add_smartart(
+    slide_index: int,
+    layout: Any,
+    items: list[Any],
+    left: float,
+    top: float,
+    width: float,
+    height: float,
+) -> dict[str, Any]:
+    """Wstawia diagram SmartArt i wypelnia go tekstem. 'layout' to klucz
+    ('bProcess3', 'hierarchy1'), numer albo nazwa z ppt_list_smartart_layouts -
+    klucz jest pewniejszy, bo nazwy sa tlumaczone na jezyk Office'a.
+    'items' przyjmuje teksty albo slowniki {"text": ..., "level": 2} -
+    poziom 2+ tworzy podwezly."""
+    return call_bridge(
+        "powerpoint",
+        "add_smartart",
+        {
+            "slide_index": slide_index,
+            "layout": layout,
+            "items": items,
+            "left": left,
+            "top": top,
+            "width": width,
+            "height": height,
+        },
+    )
+
+
+@server.tool()
+def ppt_list_sections() -> dict[str, Any]:
+    """Sekcje prezentacji wraz z pierwszym slajdem i liczba slajdow."""
+    return call_bridge("powerpoint", "list_sections", {})
+
+
+@server.tool()
+def ppt_add_section(name: str, before_slide: int = 1) -> dict[str, Any]:
+    """Zaklada sekcje zaczynajaca sie od wskazanego slajdu."""
+    return call_bridge(
+        "powerpoint", "add_section", {"name": name, "before_slide": before_slide}
+    )
+
+
+@server.tool()
+def ppt_delete_section(
+    section_index: int, delete_slides: bool = False
+) -> dict[str, Any]:
+    """Usuwa sekcje; 'delete_slides=True' kasuje takze nalezace do niej slajdy."""
+    return call_bridge(
+        "powerpoint",
+        "delete_section",
+        {"section_index": section_index, "delete_slides": delete_slides},
+    )
+
+
+@server.tool()
+def ppt_slideshow(
+    command: str = "start", slide_index: int | None = None
+) -> dict[str, Any]:
+    """Steruje pokazem slajdow: 'start' (opcjonalnie od 'slide_index'), 'stop',
+    'goto' (wymaga 'slide_index')."""
+    return call_bridge(
+        "powerpoint",
+        "slideshow",
+        {"command": command, "slide_index": slide_index},
+    )
+
+
+@server.tool()
+def ppt_copy_slide_to(
+    slide_index: int, target_path: str, position: int | None = None
+) -> dict[str, Any]:
+    """Kopiuje slajd do innej, istniejacej prezentacji. Bez 'position' slajd
+    trafia na koniec. Nie uzywa schowka."""
+    return call_bridge(
+        "powerpoint",
+        "copy_slide_to",
+        {
+            "slide_index": slide_index,
+            "target_path": target_path,
+            "position": position,
+        },
+    )
+
+
+@server.tool()
 def ppt_get_theme() -> dict[str, Any]:
     """Zwraca palete kolorow i czcionki motywu prezentacji."""
     return call_bridge("powerpoint", "get_theme", {})

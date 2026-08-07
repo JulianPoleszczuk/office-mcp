@@ -5,13 +5,13 @@ Serwer MCP, który pozwala Claude'owi sterować **otwartymi** aplikacjami Micros
 promptem, a zmiany widać na żywo w oknie aplikacji — bez pośredniego generowania plików i
 otwierania ich ręcznie.
 
-- 87 narzędzi MCP: `ppt_*` (39), `xl_*` (25), `doc_*` (23)
+- 101 narzędzi MCP: `ppt_*` (53), `xl_*` (25), `doc_*` (23)
 - pełny cykl: tworzenie, odczyt istniejących dokumentów, edycja, formatowanie, wykresy, obrazy, tabele,
   animacje i przejścia slajdów
 - eksport slajdu do PNG — model może obejrzeć własny slajd i poprawić układ zamiast pracować w ciemno
 - styl jako jeden byt: paleta i czcionki motywu, tło na wzorcu — zamiast powtarzania hexów przy każdym kształcie
 - podłącza się do już uruchomionej instancji Office zamiast otwierać drugą
-- 271 testów jednostkowych i integracyjnych działających bez zainstalowanego Office
+- 307 testów jednostkowych i integracyjnych działających bez zainstalowanego Office
 
 ## Architektura
 
@@ -176,6 +176,20 @@ Wszystkie narzędzia zwracają JSON w jednym formacie:
 | `ppt_add_chart(slide_index, chart_type, categories, series_data, ...)` | Wykres z danymi |
 | `ppt_add_table(slide_index, rows, cols, data, left, top, width, height)` | Tabela |
 | `ppt_add_shape(slide_index, shape_type, left, top, width, height, ...)` | Kształt |
+| `ppt_group_shapes(slide_index, shape_ids, name=None)` | Łączy kształty w grupę |
+| `ppt_ungroup_shapes(slide_index, shape_id)` | Rozbija grupę |
+| `ppt_align_shapes(slide_index, shape_ids, align, relative_to_slide=False)` | Wyrównanie do siebie albo do slajdu |
+| `ppt_distribute_shapes(slide_index, shape_ids, direction, ...)` | Równe odstępy (min. 3 kształty) |
+| `ppt_add_hyperlink(slide_index, shape_id, url=None, target_slide=None, tooltip=None)` | Link zewnętrzny albo skok do slajdu |
+| `ppt_set_headers_footers(slide_index=None, footer_text=None, ...)` | Stopka, numer slajdu, data |
+| `ppt_add_media(slide_index, media_path, left, top, ..., autoplay=False)` | Wideo albo dźwięk |
+| `ppt_list_smartart_layouts(search=None, category=None)` | Układy SmartArt: klucz, nazwa, kategoria |
+| `ppt_add_smartart(slide_index, layout, items, left, top, width, height)` | Diagram SmartArt z tekstem |
+| `ppt_list_sections()` | Sekcje z zakresem slajdów |
+| `ppt_add_section(name, before_slide=1)` | Zakłada sekcję |
+| `ppt_delete_section(section_index, delete_slides=False)` | Usuwa sekcję |
+| `ppt_slideshow(command, slide_index=None)` | Pokaz slajdów: `start`, `stop`, `goto` |
+| `ppt_copy_slide_to(slide_index, target_path, position=None)` | Kopiuje slajd do innej prezentacji |
 | `ppt_get_theme()` | Paleta kolorów i czcionki motywu |
 | `ppt_set_theme_colors(colors)` | Podmienia kolory palety motywu |
 | `ppt_set_theme_fonts(major, minor)` | Czcionka nagłówków i treści |
@@ -219,6 +233,22 @@ z powrotem.
 **Uwaga na łamanie wierszy.** COM traktuje `\n` jako *miękki* łamacz wiersza wewnątrz jednego
 akapitu. Kontroler zamienia `\n` i `\r\n` na `\r`, czyli prawdziwy separator akapitu — bez tego
 `Paragraphs().Count` zwracałoby 1 i `ppt_set_paragraph_format` nie miałoby czego adresować.
+
+#### SmartArt jest zlokalizowany
+
+`SmartArtLayouts` zwraca **przetłumaczone** nazwy — polski Office ma „Podstawowa lista blokowa",
+nie „Basic Block List". Dlatego `ppt_list_smartart_layouts` podaje obok nazwy `key` (końcówkę
+identyfikatora URN, np. `bProcess3`, `hierarchy1`) i `category` — oba są takie same we wszystkich
+wersjach językowych. `ppt_add_smartart` dopasowuje układ po kluczu, numerze albo nazwie, w tej
+kolejności.
+
+```
+ppt_list_smartart_layouts(category="process")   → 33 układy z kluczami
+ppt_add_smartart(2, "bProcess3", ["Badania", "Skalowanie", "Produkt"], 60, 140, 840, 260)
+```
+
+Podwęzły powstają przez `AddNode` na rodzicu, nie przez `Demote()` — część układów (m.in.
+`hierarchy1`) odrzuca `Demote()` komunikatem „operacja nie jest obsługiwana przez bieżący obiekt".
 
 #### Pętla zwrotna
 
@@ -357,7 +387,7 @@ Przykładowa odpowiedź błędu narzędzia MCP:
 python -m pytest -q
 ```
 
-271 testów, wszystkie bez zainstalowanego Office:
+307 testów, wszystkie bez zainstalowanego Office:
 
 - `tests/test_bridge_protocol.py` — kodowanie/dekodowanie protokołu oraz test integracyjny
   serwera TCP (prawdziwy socket, atrapa kontrolera),
@@ -396,6 +426,13 @@ Scenariusze do ręcznego testu na żywym Office: `examples/example_prompts.md`.
   `ExternalExporter` i każde wywołanie kończy się `TypeError: The Python instance can not be
   converted to a COM object`, niezależnie od wiązania. Skutek uboczny: nie da się wybrać
   jakości ekran/druk ani zakresu slajdów.
+- **`SmartArtLayouts` potrafi zacząć zwracać „Odmowa dostępu".** Kolekcja układów bywa
+  nieosiągalna po intensywnej pracy z SmartArtem w jednej sesji COM; pomaga dopiero restart
+  PowerPointa. Sam kod nie ma na to wpływu — po ponownym uruchomieniu aplikacji te same
+  wywołania przechodzą.
+- **Tekst stopki na układzie bez placeholdera** (np. `blank`) jest odrzucany przez slajd.
+  `ppt_set_headers_footers` wykrywa to i zapisuje tekst na wzorcu, sygnalizując
+  `text_on_master: true` — widoczność stopki nadal ustawia się per slajd.
 - **Bridge nie przeładowuje kodu.** Żyje między restartami klienta MCP (to jest jego sens), więc
   po zmianie kontrolera trzeba go ubić — inaczej nowe akcje zwracają
   `ProtocolError: Nieznana akcja`.
