@@ -1,20 +1,20 @@
-"""Serwer MCP dla Microsoft Office 2019 (PowerPoint, Excel, Word).
+"""MCP server for Microsoft Office 2019 (PowerPoint, Excel, Word).
 
-Warstwa MCP jest cienka: kazde narzedzie zamienia argumenty na zadanie
-protokolu Bridge i zwraca ustrukturyzowany JSON::
+The MCP layer is thin: every tool turns its arguments into a Bridge protocol
+request and returns structured JSON::
 
     {"ok": true,  "result": {...}}
     {"ok": false, "error": {"type": "ComConnectionError", "message": "..."}}
 
-Zadne narzedzie nie propaguje wyjatku Pythona - awaria Office, brak Bridge
-czy zla nazwa arkusza zawsze wracaja jako opisany blad.
+No tool ever propagates a Python exception - an Office crash, a missing Bridge
+or a bad sheet name always come back as a described error.
 
-Uruchomienie (stdio, tak jak startuje to Claude Desktop)::
+Running it (stdio, the way Claude Desktop starts it)::
 
     python server.py
 
-Bridge (proces trzymajacy polaczenia COM) startuje automatycznie przy
-pierwszym wywolaniu narzedzia. Mozna go tez uruchomic recznie:
+The Bridge (the process holding COM connections) starts automatically on the
+first tool call. You can also start it by hand:
 
     python -m bridge.main --log-level DEBUG
 """
@@ -53,11 +53,11 @@ DETACHED_PROCESS = 0x00000008
 
 
 class BridgeUnavailable(RuntimeError):
-    """Bridge nie odpowiada - nie udalo sie go uruchomic ani polaczyc."""
+    """The Bridge is not answering - it could not be started or reached."""
 
 
 class BridgeClient:
-    """Klient TCP Bridge: jedno polaczenie, autostart procesu, reconnect."""
+    """Bridge TCP client: one connection, process autostart, reconnect."""
 
     def __init__(
         self,
@@ -76,7 +76,7 @@ class BridgeClient:
         self._process: subprocess.Popen | None = None
 
     def call(self, app: str, action: str, params: dict[str, Any]) -> Response:
-        """Wysyla zadanie do Bridge; przy zerwanym polaczeniu ponawia raz."""
+        """Sends a request to the Bridge; retries once on a dropped connection."""
         request = Request(app=app, action=action, params=params)
         last_error: Exception | None = None
 
@@ -88,7 +88,7 @@ class BridgeClient:
                     stream.flush()
                     line = stream.readline()
                     if not line:
-                        raise BridgeUnavailable("Bridge zamknal polaczenie")
+                        raise BridgeUnavailable("The Bridge closed the connection")
                     return Response.decode(line)
                 except (OSError, BridgeUnavailable) as exc:
                     last_error = exc
@@ -97,7 +97,7 @@ class BridgeClient:
                         break
 
         raise BridgeUnavailable(
-            f"Brak polaczenia z Bridge na {self.host}:{self.port} ({last_error})"
+            f"No connection to the Bridge at {self.host}:{self.port} ({last_error})"
         )
 
     def status(self) -> dict[str, Any]:
@@ -126,7 +126,7 @@ class BridgeClient:
             self._wait_for_bridge()
 
         if self._stream is None:
-            raise BridgeUnavailable("Nie udalo sie nawiazac polaczenia z Bridge")
+            raise BridgeUnavailable("Could not establish a connection to the Bridge")
         return self._stream
 
     def _open_socket(self) -> None:
@@ -146,7 +146,7 @@ class BridgeClient:
         self._socket = None
 
     def _start_bridge_process(self) -> None:
-        """Startuje Bridge w tle - Claude Desktop uruchamia tylko serwer MCP."""
+        """Starts the Bridge in the background - Claude Desktop only runs the MCP server."""
         if self._process is not None and self._process.poll() is None:
             return
 
@@ -181,7 +181,7 @@ class BridgeClient:
                 time.sleep(0.3)
 
         raise BridgeUnavailable(
-            f"Bridge nie wystartowal w ciagu {BRIDGE_START_TIMEOUT:.0f}s - "
+            f"The Bridge did not start within {BRIDGE_START_TIMEOUT:.0f}s - "
             f"uruchom go recznie: python -m bridge.main --port {self.port}"
         )
 
@@ -190,11 +190,11 @@ client = BridgeClient()
 server = _McpServer(
     "office-mcp",
     instructions=(
-        "Sterowanie otwartymi aplikacjami Microsoft Office 2019 na Windows przez COM. "
-        "Narzedzia ppt_* obsluguja PowerPoint, xl_* Excel, doc_* Word. "
-        "Aplikacje uruchamiaja sie leniwie, a zmiany widac na zywo w oknie Office. "
-        "Wspolrzedne i rozmiary w PowerPoincie podaje sie w punktach (1 cm = 28.35 pt), "
-        "indeksy slajdow i akapitow licza sie od 1."
+        "Drive open Microsoft Office 2019 apps on Windows through COM. "
+        "ppt_* tools handle PowerPoint, xl_* Excel, doc_* Word. "
+        "Apps start lazily and changes show up live in the Office window. "
+        "PowerPoint coordinates and sizes are in points (1 cm = 28.35 pt), "
+        "slide and paragraph indexes count from 1."
     ),
 )
 
@@ -205,7 +205,7 @@ def call_bridge(
     params: dict[str, Any] | None = None,
     keep_none: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """Wysyla akcje do Bridge i zwraca odpowiedz w stalym formacie JSON."""
+    """Sends an action to the Bridge and returns a reply in a fixed JSON shape."""
     cleaned = {
         key: value
         for key, value in (params or {}).items()
@@ -219,8 +219,8 @@ def call_bridge(
             "ok": False,
             "error": {"type": "BridgeUnavailable", "message": str(exc)},
         }
-    except Exception as exc:  # noqa: BLE001 - narzedzie MCP nigdy nie rzuca wyjatkiem
-        logger.exception("Blad wywolania %s.%s", app, action)
+    except Exception as exc:  # noqa: BLE001 - an MCP tool never raises
+        logger.exception("Error calling %s.%s", app, action)
         return {"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}
 
     if response.ok:
@@ -230,7 +230,7 @@ def call_bridge(
 
 @server.tool()
 def office_status() -> dict[str, Any]:
-    """Stan mostu COM: czy Bridge dziala i ktore aplikacje Office sa podlaczone."""
+    """COM bridge state: whether the Bridge runs and which Office apps are connected."""
     apps = {}
     for app in ("powerpoint", "excel", "word"):
         apps[app] = call_bridge(app, "status")
@@ -239,9 +239,9 @@ def office_status() -> dict[str, Any]:
 
 @server.tool()
 def ppt_create_presentation(path: str, template: str | None = None) -> dict[str, Any]:
-    """Tworzy nowa prezentacje i zapisuje ja pod podana sciezka (.pptx).
+    """Creates a presentation and saves it at the given path (.pptx).
 
-    Opcjonalny 'template' to sciezka do pliku .potx/.thmx z motywem.
+    The optional 'template' is a path to a .potx/.thmx file with a theme.
     """
     return call_bridge(
         "powerpoint", "create_presentation", {"path": path, "template": template}
@@ -250,37 +250,37 @@ def ppt_create_presentation(path: str, template: str | None = None) -> dict[str,
 
 @server.tool()
 def ppt_open_presentation(path: str) -> dict[str, Any]:
-    """Otwiera istniejaca prezentacje; jesli jest juz otwarta, aktywuje jej okno."""
+    """Opens an existing presentation; if already open, activates its window."""
     return call_bridge("powerpoint", "open_presentation", {"path": path})
 
 
 @server.tool()
 def ppt_save(path: str | None = None) -> dict[str, Any]:
-    """Zapisuje aktywna prezentacje; z 'path' robi zapis jako nowy plik."""
+    """Saves the current presentation; with 'path' saves it as a new file."""
     return call_bridge("powerpoint", "save", {"path": path})
 
 
 @server.tool()
 def ppt_close(save: bool = True) -> dict[str, Any]:
-    """Zamyka aktywna prezentacje, domyslnie zapisujac zmiany."""
+    """Closes the current presentation, saving changes by default."""
     return call_bridge("powerpoint", "close", {"save": save})
 
 
 @server.tool()
 def ppt_get_presentation_info() -> dict[str, Any]:
-    """Zwraca liczbe slajdow, rozmiar slajdu, nazwe motywu i sciezke pliku."""
+    """Returns slide count, slide size, theme name and file path."""
     return call_bridge("powerpoint", "get_presentation_info")
 
 
 @server.tool()
 def ppt_get_slide_content(slide_index: int) -> dict[str, Any]:
-    """Zwraca pelna zawartosc slajdu: ksztalty, ich pozycje, teksty i notatki."""
+    """Returns full slide content: shapes, their positions, text and notes."""
     return call_bridge("powerpoint", "get_slide_content", {"slide_index": slide_index})
 
 
 @server.tool()
 def ppt_list_slides() -> dict[str, Any]:
-    """Lista slajdow z tytulami, nazwami ukladow i liczba ksztaltow."""
+    """Slide list with titles, layout names and shape counts."""
     return call_bridge("powerpoint", "list_slides")
 
 
@@ -290,11 +290,11 @@ def ppt_add_slide(
     index: int | None = None,
     title: str | None = None,
 ) -> dict[str, Any]:
-    """Dodaje slajd o wybranym ukladzie.
+    """Adds a slide with the chosen layout.
 
     Uklady: title, title_content, two_content, title_only, blank,
     section_header, comparison, picture_with_caption, chart, table.
-    Bez 'index' slajd trafia na koniec prezentacji.
+    Without 'index' the slide goes to the end of the presentation.
     """
     return call_bridge(
         "powerpoint", "add_slide", {"layout": layout, "index": index, "title": title}
@@ -303,19 +303,19 @@ def ppt_add_slide(
 
 @server.tool()
 def ppt_delete_slide(slide_index: int) -> dict[str, Any]:
-    """Usuwa slajd o podanym numerze (liczac od 1)."""
+    """Deletes the slide with the given number (counting from 1)."""
     return call_bridge("powerpoint", "delete_slide", {"slide_index": slide_index})
 
 
 @server.tool()
 def ppt_duplicate_slide(slide_index: int) -> dict[str, Any]:
-    """Duplikuje slajd - kopia trafia bezposrednio za oryginalem."""
+    """Duplicates a slide - the copy lands right after the original."""
     return call_bridge("powerpoint", "duplicate_slide", {"slide_index": slide_index})
 
 
 @server.tool()
 def ppt_reorder_slide(from_index: int, to_index: int) -> dict[str, Any]:
-    """Przenosi slajd na inna pozycje w prezentacji."""
+    """Moves a slide to another position in the presentation."""
     return call_bridge(
         "powerpoint", "reorder_slide", {"from_index": from_index, "to_index": to_index}
     )
@@ -323,7 +323,7 @@ def ppt_reorder_slide(from_index: int, to_index: int) -> dict[str, Any]:
 
 @server.tool()
 def ppt_set_title(slide_index: int, text: str) -> dict[str, Any]:
-    """Ustawia tytul slajdu; gdy uklad nie ma tytulu, wstawia pole tekstowe."""
+    """Sets the slide title; if the layout has none, inserts a text box."""
     return call_bridge(
         "powerpoint", "set_title", {"slide_index": slide_index, "text": text}
     )
@@ -342,9 +342,9 @@ def ppt_add_textbox(
     color: str | None = None,
     align: str | None = None,
 ) -> dict[str, Any]:
-    """Wstawia pole tekstowe. Wspolrzedne w punktach, slajd 16:9 ma 960x540 pt.
+    """Inserts a text box. Coordinates in points, a 16:9 slide is 960x540 pt.
 
-    'color' przyjmuje '#RRGGBB' albo nazwe koloru, 'align' to left/center/right/justify.
+    'color' takes '#RRGGBB' or a colour name, 'align' is left/center/right/justify.
     """
     return call_bridge(
         "powerpoint",
@@ -370,11 +370,11 @@ def ppt_add_bullet_list(
     items: list[Any],
     placeholder: str = "content",
 ) -> dict[str, Any]:
-    """Wypelnia placeholder lista punktowana.
+    """Fills a placeholder with a bulleted list.
 
     'items' to teksty albo obiekty z poziomem wciecia:
-    ["Punkt glowny", {"text": "Podpunkt", "level": 2}].
-    'placeholder' to "content", "title" albo id ksztaltu.
+    ["Main point", {"text": "Sub point", "level": 2}].
+    'placeholder' is "content", "title" or a shape id.
     """
     return call_bridge(
         "powerpoint",
@@ -390,9 +390,9 @@ def ppt_find_replace_text(
     slide_index: int | None = None,
     match_case: bool = False,
 ) -> dict[str, Any]:
-    """Podmienia tekst w prezentacji (takze w tabelach i grupach ksztaltow).
+    """Replaces text in the presentation (including tables and shape groups).
 
-    Bez 'slide_index' przeszukuje wszystkie slajdy.
+    Without 'slide_index' it searches every slide.
     """
     return call_bridge(
         "powerpoint",
@@ -408,7 +408,7 @@ def ppt_find_replace_text(
 
 @server.tool()
 def ppt_set_speaker_notes(slide_index: int, text: str) -> dict[str, Any]:
-    """Ustawia notatki prelegenta dla wskazanego slajdu."""
+    """Sets the speaker notes for the given slide."""
     return call_bridge(
         "powerpoint", "set_speaker_notes", {"slide_index": slide_index, "text": text}
     )
@@ -425,7 +425,7 @@ def ppt_set_text_style(
     italic: bool | None = None,
     underline: bool | None = None,
 ) -> dict[str, Any]:
-    """Formatuje tekst ksztaltu. 'shape_id' pobierz z ppt_get_slide_content."""
+    """Formats shape text. Get 'shape_id' from ppt_get_slide_content."""
     return call_bridge(
         "powerpoint",
         "set_text_style",
@@ -444,7 +444,7 @@ def ppt_set_text_style(
 
 @server.tool()
 def ppt_apply_theme(theme_name_or_path: str) -> dict[str, Any]:
-    """Nadaje prezentacji motyw z pliku .thmx/.potx albo z galerii motywow Office."""
+    """Applies a theme from a .thmx/.potx file or from the Office theme gallery."""
     return call_bridge(
         "powerpoint", "apply_theme", {"theme_name_or_path": theme_name_or_path}
     )
@@ -456,7 +456,7 @@ def ppt_set_background(
     color: str | None = None,
     image_path: str | None = None,
 ) -> dict[str, Any]:
-    """Ustawia tlo slajdu - jednolity kolor ('#RRGGBB') albo obraz z pliku."""
+    """Sets the slide background - a solid colour ('#RRGGBB') or an image file."""
     return call_bridge(
         "powerpoint",
         "set_background",
@@ -466,7 +466,7 @@ def ppt_set_background(
 
 @server.tool()
 def ppt_set_slide_layout(slide_index: int, layout_name: str) -> dict[str, Any]:
-    """Zmienia uklad slajdu - po nazwie ukladu z wzorca albo nazwie standardowej."""
+    """Changes the slide layout - by master layout name or a standard name."""
     return call_bridge(
         "powerpoint",
         "set_slide_layout",
@@ -483,7 +483,7 @@ def ppt_add_image(
     width: float | None = None,
     height: float | None = None,
 ) -> dict[str, Any]:
-    """Wstawia obraz na slajd. Bez width/height zachowuje oryginalne proporcje."""
+    """Inserts an image on the slide. Without width/height keeps the proportions."""
     return call_bridge(
         "powerpoint",
         "add_image",
@@ -510,10 +510,10 @@ def ppt_add_chart(
     height: float,
     title: str | None = None,
 ) -> dict[str, Any]:
-    """Wstawia wykres z danymi.
+    """Inserts a chart with data.
 
     'chart_type': bar, column, line, pie, area, scatter, doughnut, radar.
-    'series_data': {"Wyniki 2024": [10, 20, 30]} albo lista serii
+    'series_data': {"Results 2024": [10, 20, 30]} or a list of series
     [{"name": "Wyniki", "values": [10, 20]}].
     """
     return call_bridge(
@@ -544,7 +544,7 @@ def ppt_add_table(
     width: float,
     height: float,
 ) -> dict[str, Any]:
-    """Wstawia tabele i wypelnia ja danymi (pierwszy wiersz zostaje pogrubiony)."""
+    """Inserts a table and fills it with data (the first row is bolded)."""
     return call_bridge(
         "powerpoint",
         "add_table",
@@ -574,9 +574,9 @@ def ppt_add_shape(
     line_color: str | None = None,
     line_width: float | None = None,
 ) -> dict[str, Any]:
-    """Wstawia ksztalt: rectangle, rounded_rectangle, oval, triangle, diamond,
+    """Inserts a shape: rectangle, rounded_rectangle, oval, triangle, diamond,
     star, arrow_right, callout, cloud, hexagon. 'fill_color'/'line_color'
-    przyjmuja "none", zeby wylaczyc wypelnienie albo obrys."""
+    take "none" to switch the fill or the outline off."""
     return call_bridge(
         "powerpoint",
         "add_shape",
@@ -599,8 +599,8 @@ def ppt_add_shape(
 def ppt_group_shapes(
     slide_index: int, shape_ids: list[Any], name: str | None = None
 ) -> dict[str, Any]:
-    """Laczy ksztalty w grupe - odtad ruszaja sie, skaluja i animuja jako calosc.
-    Wymaga co najmniej dwoch ksztaltow."""
+    """Groups shapes - from now on they move, scale and animate as one.
+    Needs at least two shapes."""
     return call_bridge(
         "powerpoint",
         "group_shapes",
@@ -610,7 +610,7 @@ def ppt_group_shapes(
 
 @server.tool()
 def ppt_ungroup_shapes(slide_index: int, shape_id: Any) -> dict[str, Any]:
-    """Rozbija grupe na pojedyncze ksztalty i zwraca ich id."""
+    """Breaks a group into individual shapes and returns their ids."""
     return call_bridge(
         "powerpoint",
         "ungroup_shapes",
@@ -625,8 +625,8 @@ def ppt_align_shapes(
     align: str,
     relative_to_slide: bool = False,
 ) -> dict[str, Any]:
-    """Wyrownuje ksztalty: left, center, right, top, middle, bottom.
-    'relative_to_slide=True' wyrownuje do krawedzi slajdu zamiast do siebie."""
+    """Aligns shapes: left, center, right, top, middle, bottom.
+    'relative_to_slide=True' aligns to the slide edges instead of to each other."""
     return call_bridge(
         "powerpoint",
         "align_shapes",
@@ -646,7 +646,7 @@ def ppt_distribute_shapes(
     direction: str = "horizontal",
     relative_to_slide: bool = False,
 ) -> dict[str, Any]:
-    """Rozklada co najmniej trzy ksztalty w rownych odstepach - horizontal
+    """Spreads at least three shapes at equal intervals - horizontal
     albo vertical."""
     return call_bridge(
         "powerpoint",
@@ -668,8 +668,8 @@ def ppt_add_hyperlink(
     target_slide: int | None = None,
     tooltip: str | None = None,
 ) -> dict[str, Any]:
-    """Podpina pod ksztalt link: zewnetrzny adres ('url') albo skok do slajdu
-    w tej prezentacji ('target_slide'). 'tooltip' to podpowiedz przy najechaniu."""
+    """Attaches a link to a shape: an external address ('url') or a jump to a
+    slide in this deck ('target_slide'). 'tooltip' is the hover hint."""
     return call_bridge(
         "powerpoint",
         "add_hyperlink",
@@ -691,7 +691,7 @@ def ppt_set_headers_footers(
     show_slide_number: bool | None = None,
     show_date: bool | None = None,
 ) -> dict[str, Any]:
-    """Stopka, numer slajdu i data. Bez 'slide_index' obejmuje wszystkie slajdy.
+    """Footer, slide number and date. Without 'slide_index' covers every slide.
     Sam 'footer_text' automatycznie wlacza widocznosc stopki."""
     return call_bridge(
         "powerpoint",
@@ -716,8 +716,8 @@ def ppt_add_media(
     height: float | None = None,
     autoplay: bool = False,
 ) -> dict[str, Any]:
-    """Wstawia wideo albo dzwiek osadzony w prezentacji. 'autoplay=True' dopina
-    efekt odtwarzania startujacy razem z poprzednim zamiast na klikniecie."""
+    """Inserts video or audio embedded in the presentation. 'autoplay=True'
+    attaches a play effect starting with the previous one instead of on click."""
     return call_bridge(
         "powerpoint",
         "add_media",
@@ -737,10 +737,10 @@ def ppt_add_media(
 def ppt_list_smartart_layouts(
     search: str | None = None, category: str | None = None
 ) -> dict[str, Any]:
-    """Uklady SmartArt: klucz, nazwa i kategoria. UWAGA: 'name' jest
-    zlokalizowane (polski Office zwraca "Podstawowa lista blokowa"), wiec do
-    wyboru ukladu uzywaj 'key' - jest identyczny we wszystkich wersjach
-    jezykowych. 'category' tez nie jest tlumaczona: list, process, cycle,
+    """SmartArt layouts: key, name and category. NOTE: 'name' is localised
+    (a non-English Office returns translated names), so pick a layout by
+    'key' - it is identical in every language version. 'category' is not
+    translated either: list, process, cycle,
     hierarchy, relationship, matrix, pyramid, picture."""
     return call_bridge(
         "powerpoint",
@@ -759,11 +759,11 @@ def ppt_add_smartart(
     width: float,
     height: float,
 ) -> dict[str, Any]:
-    """Wstawia diagram SmartArt i wypelnia go tekstem. 'layout' to klucz
-    ('bProcess3', 'hierarchy1'), numer albo nazwa z ppt_list_smartart_layouts -
-    klucz jest pewniejszy, bo nazwy sa tlumaczone na jezyk Office'a.
+    """Inserts a SmartArt diagram and fills it with text. 'layout' is a key
+    ('bProcess3', 'hierarchy1'), a number or a name from ppt_list_smartart_layouts -
+    the key is safer, because names are translated into the Office language.
     'items' przyjmuje teksty albo slowniki {"text": ..., "level": 2} -
-    poziom 2+ tworzy podwezly."""
+    level 2+ creates child nodes."""
     return call_bridge(
         "powerpoint",
         "add_smartart",
@@ -781,13 +781,13 @@ def ppt_add_smartart(
 
 @server.tool()
 def ppt_list_sections() -> dict[str, Any]:
-    """Sekcje prezentacji wraz z pierwszym slajdem i liczba slajdow."""
+    """Presentation sections with their first slide and slide count."""
     return call_bridge("powerpoint", "list_sections", {})
 
 
 @server.tool()
 def ppt_add_section(name: str, before_slide: int = 1) -> dict[str, Any]:
-    """Zaklada sekcje zaczynajaca sie od wskazanego slajdu."""
+    """Creates a section starting at the given slide."""
     return call_bridge(
         "powerpoint", "add_section", {"name": name, "before_slide": before_slide}
     )
@@ -797,7 +797,7 @@ def ppt_add_section(name: str, before_slide: int = 1) -> dict[str, Any]:
 def ppt_delete_section(
     section_index: int, delete_slides: bool = False
 ) -> dict[str, Any]:
-    """Usuwa sekcje; 'delete_slides=True' kasuje takze nalezace do niej slajdy."""
+    """Deletes a section; 'delete_slides=True' also removes its slides."""
     return call_bridge(
         "powerpoint",
         "delete_section",
@@ -809,8 +809,8 @@ def ppt_delete_section(
 def ppt_slideshow(
     command: str = "start", slide_index: int | None = None
 ) -> dict[str, Any]:
-    """Steruje pokazem slajdow: 'start' (opcjonalnie od 'slide_index'), 'stop',
-    'goto' (wymaga 'slide_index')."""
+    """Controls the slide show: 'start' (optionally from 'slide_index'), 'stop',
+    'goto' (requires 'slide_index')."""
     return call_bridge(
         "powerpoint",
         "slideshow",
@@ -822,8 +822,8 @@ def ppt_slideshow(
 def ppt_copy_slide_to(
     slide_index: int, target_path: str, position: int | None = None
 ) -> dict[str, Any]:
-    """Kopiuje slajd do innej, istniejacej prezentacji. Bez 'position' slajd
-    trafia na koniec. Nie uzywa schowka."""
+    """Copies a slide into another, existing presentation. Without 'position'
+    the slide goes to the end. Does not use the clipboard."""
     return call_bridge(
         "powerpoint",
         "copy_slide_to",
@@ -837,7 +837,7 @@ def ppt_copy_slide_to(
 
 @server.tool()
 def ppt_get_theme() -> dict[str, Any]:
-    """Zwraca palete kolorow i czcionki motywu prezentacji."""
+    """Returns the presentation theme's colour palette and fonts."""
     return call_bridge("powerpoint", "get_theme", {})
 
 
@@ -845,9 +845,9 @@ def ppt_get_theme() -> dict[str, Any]:
 def ppt_set_theme_colors(colors: dict[str, str]) -> dict[str, Any]:
     """Podmienia kolory w palecie motywu, np.
     {"accent1": "#10A37F", "dark1": "#0B1014", "light1": "#ECF2F0"}.
-    Nazwy: dark1/text1, light1/background1, dark2, light2, accent1..accent6,
-    hyperlink, followed_hyperlink. Ustawiony raz motyw obowiazuje wszystkie
-    slajdy - nie trzeba powtarzac koloru przy kazdym ksztalcie."""
+    Names: dark1/text1, light1/background1, dark2, light2, accent1..accent6,
+    hyperlink, followed_hyperlink. Set once, the theme applies to every
+    slide - no need to repeat the colour on every shape."""
     return call_bridge("powerpoint", "set_theme_colors", {"colors": colors})
 
 
@@ -855,7 +855,7 @@ def ppt_set_theme_colors(colors: dict[str, str]) -> dict[str, Any]:
 def ppt_set_theme_fonts(
     major: str | None = None, minor: str | None = None
 ) -> dict[str, Any]:
-    """Ustawia czcionki motywu: 'major' dla naglowkow, 'minor' dla tresci."""
+    """Sets theme fonts: 'major' for headings, 'minor' for body text."""
     return call_bridge(
         "powerpoint", "set_theme_fonts", {"major": major, "minor": minor}
     )
@@ -867,8 +867,8 @@ def ppt_set_master_background(
     image_path: str | None = None,
     apply_to_slides: bool = True,
 ) -> dict[str, Any]:
-    """Ustawia tlo na wzorcu slajdow - raz dla calej prezentacji, zamiast
-    wolac ppt_set_background dla kazdego slajdu osobno."""
+    """Sets the background on the slide master - once for the whole deck, instead
+    of calling ppt_set_background for every slide separately."""
     return call_bridge(
         "powerpoint",
         "set_master_background",
@@ -900,7 +900,7 @@ def ppt_set_shape_format(
     shadow_transparency: float | None = None,
     corner_radius: float | None = None,
 ) -> dict[str, Any]:
-    """Wyglad istniejacego ksztaltu. 'gradient_from' + 'gradient_to' wlaczaja
+    """Look of an existing shape. 'gradient_from' + 'gradient_to' turn on a
     gradient dwukolorowy ('gradient_style': horizontal, vertical, diagonal_up,
     diagonal_down, from_corner, from_center). Przezroczystosci 0.0-1.0.
     'line_dash': solid, dash, round_dot, long_dash i pokrewne.
@@ -944,10 +944,10 @@ def ppt_set_paragraph_format(
     word_wrap: bool | None = None,
     margin: float | None = None,
 ) -> dict[str, Any]:
-    """Typografia akapitu: interlinia (wielokrotnosc, 1.0 = pojedyncza), odstepy
+    """Paragraph typography: line spacing (a multiple, 1.0 = single), gaps
     przed/po w punktach, wyrownanie (left/center/right/justify), kotwica pionowa
     (top/middle/bottom), autodopasowanie ramki i marginesy wewnetrzne.
-    Bez 'paragraph' zmiana obejmuje caly tekst ksztaltu."""
+    Without 'paragraph' the change covers all the text of the shape."""
     return call_bridge(
         "powerpoint",
         "set_paragraph_format",
@@ -981,7 +981,7 @@ def ppt_format_chart(
     value_axis_min: float | None = None,
     value_axis_max: float | None = None,
 ) -> dict[str, Any]:
-    """Dostraja wykres do kolorystyki slajdu: kolory serii, kolor tekstu osi
+    """Tunes a chart to the slide colours: series colours, axis and legend text
     i legendy, tlo ('none' = przezroczyste), pozycja legendy
     (bottom/top/left/right albo False), etykiety danych, linie siatki, tytul."""
     return call_bridge(
@@ -1005,7 +1005,7 @@ def ppt_format_chart(
 
 @server.tool()
 def ppt_delete_shape(slide_index: int, shape_id: Any) -> dict[str, Any]:
-    """Usuwa ksztalt ze slajdu; 'shape_id' to id, nazwa ksztaltu albo skrot
+    """Deletes a shape from the slide; 'shape_id' is an id, a shape name or the
     'title'/'content'."""
     return call_bridge(
         "powerpoint",
@@ -1024,9 +1024,9 @@ def ppt_set_shape_position(
     height: float | None = None,
     rotation: float | None = None,
 ) -> dict[str, Any]:
-    """Przesuwa, skaluje i obraca istniejacy ksztalt. Wspolrzedne w punktach
-    (slajd 16:9 = 960 x 540 pt), 'rotation' w stopniach. Podaje sie tylko te
-    pola, ktore maja sie zmienic."""
+    """Moves, scales and rotates an existing shape. Coordinates in points
+    (a 16:9 slide is 960 x 540 pt), 'rotation' in degrees. Pass only the
+    fields you want to change."""
     return call_bridge(
         "powerpoint",
         "set_shape_position",
@@ -1046,7 +1046,7 @@ def ppt_set_shape_position(
 def ppt_set_shape_order(
     slide_index: int, shape_id: Any, order: str = "front"
 ) -> dict[str, Any]:
-    """Zmienia warstwe ksztaltu: front (na wierzch), back (na spod),
+    """Changes the shape layer: front (to the top), back (to the bottom),
     forward (krok w gore), backward (krok w dol)."""
     return call_bridge(
         "powerpoint",
@@ -1062,8 +1062,8 @@ def ppt_export_slide(
     width: int | None = None,
     height: int | None = None,
 ) -> dict[str, Any]:
-    """Zapisuje slajd jako obraz - format wynika z rozszerzenia pliku
-    (.png, .jpg, .gif, .bmp, .wmf, .emf). Bez podanych wymiarow obraz ma
+    """Saves the slide as an image - the format follows the file extension
+    (.png, .jpg, .gif, .bmp, .wmf, .emf). Without dimensions the image is
     1920 px szerokosci. Sluzy do obejrzenia efektu i poprawienia ukladu."""
     return call_bridge(
         "powerpoint",
@@ -1074,7 +1074,7 @@ def ppt_export_slide(
 
 @server.tool()
 def ppt_export_pdf(path: str, embed_fonts: bool = True) -> dict[str, Any]:
-    """Eksportuje cala prezentacje do PDF-u; nie zmienia pliku otwartego
+    """Exports the whole presentation to PDF; does not change the file open
     w PowerPoincie."""
     return call_bridge(
         "powerpoint", "export_pdf", {"path": path, "embed_fonts": embed_fonts}
@@ -1092,11 +1092,11 @@ def ppt_add_animation(
     delay: float | None = None,
     exit_effect: bool = False,
 ) -> dict[str, Any]:
-    """Animuje ksztalt na slajdzie. 'shape_id' to id, nazwa ksztaltu albo skrot
+    """Animates a shape on a slide. 'shape_id' is an id, a shape name or the
     'title'/'content'. Efekty: fade, fly, wipe, zoom, float, grow_and_turn,
     rise_up, split, wheel, bounce, spin, grow_shrink, teeter i inne.
     Wyzwalacze: on_click, with_previous, after_previous. 'level' = shape albo
-    by_paragraph (tekst akapit po akapicie). 'duration' i 'delay' w sekundach."""
+    by_paragraph (text paragraph by paragraph). 'duration' and 'delay' in seconds."""
     return call_bridge(
         "powerpoint",
         "add_animation",
@@ -1115,7 +1115,7 @@ def ppt_add_animation(
 
 @server.tool()
 def ppt_list_animations(slide_index: int) -> dict[str, Any]:
-    """Zwraca animacje slajdu w kolejnosci odtwarzania wraz z przejsciem slajdu."""
+    """Returns the slide's animations in playback order plus its transition."""
     return call_bridge("powerpoint", "list_animations", {"slide_index": slide_index})
 
 
@@ -1127,11 +1127,11 @@ def ppt_set_transition(
     advance_on_click: bool = True,
     advance_after: float | None = None,
 ) -> dict[str, Any]:
-    """Ustawia przejscie miedzy slajdami; bez 'slide_index' obejmuje cala
+    """Sets the transition between slides; without 'slide_index' covers the whole
     prezentacje. Efekty: fade, fade_smoothly, push_left, wipe_right, cover_up,
     split_vertical_out, zoom_in, morph, honeycomb, gallery_left, cube_left,
     doors_vertical, curtains, prestige i inne. 'duration' w sekundach,
-    'advance_after' wlacza automatyczna zmiane slajdu po zadanym czasie."""
+    'advance_after' turns on automatic slide change after the given time."""
     return call_bridge(
         "powerpoint",
         "set_transition",
@@ -1147,43 +1147,43 @@ def ppt_set_transition(
 
 @server.tool()
 def xl_create_workbook(path: str) -> dict[str, Any]:
-    """Tworzy nowy skoroszyt i zapisuje go pod podana sciezka (.xlsx)."""
+    """Creates a new workbook and saves it at the given path (.xlsx)."""
     return call_bridge("excel", "create_workbook", {"path": path})
 
 
 @server.tool()
 def xl_open_workbook(path: str) -> dict[str, Any]:
-    """Otwiera istniejacy skoroszyt; jesli jest juz otwarty, aktywuje jego okno."""
+    """Opens an existing workbook; if already open, activates its window."""
     return call_bridge("excel", "open_workbook", {"path": path})
 
 
 @server.tool()
 def xl_save(path: str | None = None) -> dict[str, Any]:
-    """Zapisuje aktywny skoroszyt; z 'path' robi zapis jako nowy plik."""
+    """Saves the current workbook; with 'path' saves it as a new file."""
     return call_bridge("excel", "save", {"path": path})
 
 
 @server.tool()
 def xl_close(save: bool = True) -> dict[str, Any]:
-    """Zamyka aktywny skoroszyt, domyslnie zapisujac zmiany."""
+    """Closes the current workbook, saving changes by default."""
     return call_bridge("excel", "close", {"save": save})
 
 
 @server.tool()
 def xl_add_sheet(name: str, index: int | None = None) -> dict[str, Any]:
-    """Dodaje arkusz o podanej nazwie; bez 'index' trafia on na koniec."""
+    """Adds a sheet with the given name; without 'index' it goes to the end."""
     return call_bridge("excel", "add_sheet", {"name": name, "index": index})
 
 
 @server.tool()
 def xl_delete_sheet(name: str) -> dict[str, Any]:
-    """Usuwa arkusz o podanej nazwie."""
+    """Deletes the sheet with the given name."""
     return call_bridge("excel", "delete_sheet", {"name": name})
 
 
 @server.tool()
 def xl_rename_sheet(old_name: str, new_name: str) -> dict[str, Any]:
-    """Zmienia nazwe arkusza."""
+    """Renames a sheet."""
     return call_bridge(
         "excel", "rename_sheet", {"old_name": old_name, "new_name": new_name}
     )
@@ -1191,25 +1191,25 @@ def xl_rename_sheet(old_name: str, new_name: str) -> dict[str, Any]:
 
 @server.tool()
 def xl_get_workbook_info() -> dict[str, Any]:
-    """Zwraca liste arkuszy z ich zakresami danych, aktywny arkusz i sciezke pliku."""
+    """Returns the sheet list with their data ranges, the active sheet and file path."""
     return call_bridge("excel", "get_workbook_info")
 
 
 @server.tool()
 def xl_get_range_values(sheet: str, range_ref: str) -> dict[str, Any]:
-    """Odczytuje wartosci zakresu (np. "A1:D10") jako tablice 2D."""
+    """Reads range values (e.g. "A1:D10") as a 2D array."""
     return call_bridge("excel", "get_range_values", {"sheet": sheet, "range_ref": range_ref})
 
 
 @server.tool()
 def xl_get_used_range(sheet: str) -> dict[str, Any]:
-    """Zwraca faktycznie wypelniony obszar arkusza razem z danymi."""
+    """Returns the actually filled area of the sheet along with its data."""
     return call_bridge("excel", "get_used_range", {"sheet": sheet})
 
 
 @server.tool()
 def xl_set_cell(sheet: str, cell_ref: str, value: Any) -> dict[str, Any]:
-    """Wpisuje wartosc do komorki (np. sheet="Budzet", cell_ref="B2")."""
+    """Writes a value into a cell (e.g. sheet="Budget", cell_ref="B2")."""
     return call_bridge(
         "excel",
         "set_cell",
@@ -1220,9 +1220,9 @@ def xl_set_cell(sheet: str, cell_ref: str, value: Any) -> dict[str, Any]:
 
 @server.tool()
 def xl_set_range(sheet: str, start_cell: str, values_2d: list[list[Any]]) -> dict[str, Any]:
-    """Wkleja macierz danych naraz, zaczynajac od 'start_cell'.
+    """Pastes a whole matrix at once, starting at 'start_cell'.
 
-    Duzo szybsze niz wpisywanie komorka po komorce.
+    Much faster than writing cell by cell.
     """
     return call_bridge(
         "excel",
@@ -1233,7 +1233,7 @@ def xl_set_range(sheet: str, start_cell: str, values_2d: list[list[Any]]) -> dic
 
 @server.tool()
 def xl_set_formula(sheet: str, cell_ref: str, formula: str) -> dict[str, Any]:
-    """Wpisuje formule (np. "=SUM(A1:A10)") i zwraca wyliczony wynik."""
+    """Writes a formula (e.g. "=SUM(A1:A10)") and returns the computed result."""
     return call_bridge(
         "excel", "set_formula", {"sheet": sheet, "cell_ref": cell_ref, "formula": formula}
     )
@@ -1241,7 +1241,7 @@ def xl_set_formula(sheet: str, cell_ref: str, formula: str) -> dict[str, Any]:
 
 @server.tool()
 def xl_clear_range(sheet: str, range_ref: str, contents_only: bool = True) -> dict[str, Any]:
-    """Czysci zakres - domyslnie same wartosci, opcjonalnie takze formatowanie."""
+    """Clears a range - values only by default, optionally formatting too."""
     return call_bridge(
         "excel",
         "clear_range",
@@ -1251,7 +1251,7 @@ def xl_clear_range(sheet: str, range_ref: str, contents_only: bool = True) -> di
 
 @server.tool()
 def xl_insert_rows(sheet: str, start_row: int, count: int = 1) -> dict[str, Any]:
-    """Wstawia wiersze, przesuwajac istniejace w dol."""
+    """Inserts rows, pushing existing ones down."""
     return call_bridge(
         "excel", "insert_rows", {"sheet": sheet, "start_row": start_row, "count": count}
     )
@@ -1259,7 +1259,7 @@ def xl_insert_rows(sheet: str, start_row: int, count: int = 1) -> dict[str, Any]
 
 @server.tool()
 def xl_delete_rows(sheet: str, start_row: int, count: int = 1) -> dict[str, Any]:
-    """Usuwa wiersze, przesuwajac pozostale w gore."""
+    """Deletes rows, pulling the rest up."""
     return call_bridge(
         "excel", "delete_rows", {"sheet": sheet, "start_row": start_row, "count": count}
     )
@@ -1267,7 +1267,7 @@ def xl_delete_rows(sheet: str, start_row: int, count: int = 1) -> dict[str, Any]
 
 @server.tool()
 def xl_insert_columns(sheet: str, start_col: str | int, count: int = 1) -> dict[str, Any]:
-    """Wstawia kolumny; 'start_col' przyjmuje litere ("C") albo numer (3)."""
+    """Inserts columns; 'start_col' takes a letter ("C") or a number (3)."""
     return call_bridge(
         "excel",
         "insert_columns",
@@ -1277,7 +1277,7 @@ def xl_insert_columns(sheet: str, start_col: str | int, count: int = 1) -> dict[
 
 @server.tool()
 def xl_delete_columns(sheet: str, start_col: Any, count: int = 1) -> dict[str, Any]:
-    """Usuwa kolumny; 'start_col' przyjmuje litere ("C") albo numer (3)."""
+    """Deletes columns; 'start_col' takes a letter ("C") or a number (3)."""
     return call_bridge(
         "excel",
         "delete_columns",
@@ -1287,7 +1287,7 @@ def xl_delete_columns(sheet: str, start_col: Any, count: int = 1) -> dict[str, A
 
 @server.tool()
 def xl_set_row_height(sheet: str, row: int, height: Any) -> dict[str, Any]:
-    """Wysokosc wiersza w punktach; height="auto" dopasowuje do tresci."""
+    """Row height in points; height="auto" fits it to the content."""
     return call_bridge(
         "excel", "set_row_height", {"sheet": sheet, "row": row, "height": height}
     )
@@ -1302,8 +1302,8 @@ def xl_find_replace(
     match_case: bool = False,
     whole_cell: bool = False,
 ) -> dict[str, Any]:
-    """Podmienia tekst; bez 'sheet' przechodzi przez wszystkie arkusze.
-    'whole_cell=True' wymaga, zeby cala zawartosc komorki byla rowna szukanej."""
+    """Replaces text; without 'sheet' it walks every sheet.
+    'whole_cell=True' requires the whole cell content to equal the search text."""
     return call_bridge(
         "excel",
         "find_replace",
@@ -1326,7 +1326,7 @@ def xl_sort_range(
     order: str = "ascending",
     has_headers: bool = True,
 ) -> dict[str, Any]:
-    """Sortuje zakres po kolumnie 'sort_by' (litera, numer albo adres komorki).
+    """Sorts a range by column 'sort_by' (letter, number or cell address).
     'order' to ascending albo descending."""
     return call_bridge(
         "excel",
@@ -1345,7 +1345,7 @@ def xl_sort_range(
 def xl_set_autofilter(
     sheet: str, range_ref: str | None = None, enable: bool = True
 ) -> dict[str, Any]:
-    """Wlacza albo wylacza autofiltr; bez 'range_ref' obejmuje uzyty obszar."""
+    """Turns AutoFilter on or off; without 'range_ref' covers the used range."""
     return call_bridge(
         "excel",
         "set_autofilter",
@@ -1361,8 +1361,8 @@ def xl_copy_range(
     target_sheet: str | None = None,
     paste: str = "all",
 ) -> dict[str, Any]:
-    """Kopiuje zakres w to samo albo inne miejsce. 'paste' to all, values
-    (wkleja same wyniki, bez formul) albo formats."""
+    """Copies a range to the same or another place. 'paste' is all, values
+    (results only, no formulas) or formats."""
     return call_bridge(
         "excel",
         "copy_range",
@@ -1389,8 +1389,8 @@ def xl_add_data_validation(
     input_message: str | None = None,
     error_message: str | None = None,
 ) -> dict[str, Any]:
-    """Sprawdzanie poprawnosci danych. Dla listy rozwijanej wystarczy 'values'
-    (lista pozycji albo odwolanie do zakresu). Pozostale typy: whole_number,
+    """Data validation. For a dropdown list just pass 'values' (a list of
+    entries or a range reference). The other types: whole_number,
     decimal, date, time, text_length, custom - uzywaja 'formula' i 'operator'."""
     return call_bridge(
         "excel",
@@ -1412,7 +1412,7 @@ def xl_add_data_validation(
 
 @server.tool()
 def xl_get_cell_formula(sheet: str, range_ref: str) -> dict[str, Any]:
-    """Zwraca formuly zakresu (a nie wyliczone wartosci) razem z wynikami."""
+    """Returns range formulas (not computed values) along with the results."""
     return call_bridge(
         "excel", "get_cell_formula", {"sheet": sheet, "range_ref": range_ref}
     )
@@ -1422,7 +1422,7 @@ def xl_get_cell_formula(sheet: str, range_ref: str) -> dict[str, Any]:
 def xl_export_pdf(
     path: str, sheet: str | None = None, range_ref: str | None = None
 ) -> dict[str, Any]:
-    """Eksportuje skoroszyt, pojedynczy arkusz albo zakres do PDF-u."""
+    """Exports the workbook, a single sheet or a range to PDF."""
     return call_bridge(
         "excel",
         "export_pdf",
@@ -1432,8 +1432,8 @@ def xl_export_pdf(
 
 @server.tool()
 def xl_export_range_image(sheet: str, range_ref: str, path: str) -> dict[str, Any]:
-    """Zapisuje zakres jako obraz (.png/.jpg/.gif). Sluzy do obejrzenia efektu
-    formatowania i poprawienia go - tak jak ppt_export_slide dla slajdow."""
+    """Saves a range as an image (.png/.jpg/.gif). Use it to look at the
+    formatting and fix it - the same idea as ppt_export_slide for slides."""
     return call_bridge(
         "excel",
         "export_range_image",
@@ -1455,9 +1455,9 @@ def xl_format_chart(
     value_axis_min: float | None = None,
     value_axis_max: float | None = None,
 ) -> dict[str, Any]:
-    """Dostraja wykres w arkuszu: kolory serii, kolor tekstu osi i legendy,
+    """Tunes a chart in the sheet: series colours, axis and legend text colour,
     tlo ('none' = przezroczyste), pozycja legendy, etykiety, siatka, tytul.
-    'chart' to numer albo nazwa obiektu wykresu w arkuszu."""
+    'chart' is the number or name of the chart object in the sheet."""
     return call_bridge(
         "excel",
         "format_chart",
@@ -1490,10 +1490,10 @@ def xl_set_cell_format(
     align: str | None = None,
     wrap_text: bool | None = None,
 ) -> dict[str, Any]:
-    """Formatuje zakres komorek.
+    """Formats a range of cells.
 
     'number_format' to maska Excela, np. "0.00", "# ##0 zl", "0%".
-    Kolory przyjmuja '#RRGGBB' albo nazwe (red, blue, green...).
+    Colours take '#RRGGBB' or a name (red, blue, green...).
     """
     return call_bridge(
         "excel",
@@ -1515,7 +1515,7 @@ def xl_set_cell_format(
 
 @server.tool()
 def xl_set_column_width(sheet: str, column: str | int, width: float | str) -> dict[str, Any]:
-    """Ustawia szerokosc kolumny; width="auto" dopasowuje ja do zawartosci."""
+    """Sets column width; width="auto" fits it to the contents."""
     return call_bridge(
         "excel", "set_column_width", {"sheet": sheet, "column": column, "width": width}
     )
@@ -1523,7 +1523,7 @@ def xl_set_column_width(sheet: str, column: str | int, width: float | str) -> di
 
 @server.tool()
 def xl_merge_cells(sheet: str, range_ref: str, center: bool = True) -> dict[str, Any]:
-    """Scala komorki zakresu, domyslnie centrujac zawartosc."""
+    """Merges the cells of a range, centring the content by default."""
     return call_bridge(
         "excel", "merge_cells", {"sheet": sheet, "range_ref": range_ref, "center": center}
     )
@@ -1562,7 +1562,7 @@ def xl_apply_conditional_formatting(
 
 @server.tool()
 def xl_freeze_panes(sheet: str, cell_ref: str) -> dict[str, Any]:
-    """Zamraza wiersze i kolumny powyzej/na lewo od komorki (np. "A2")."""
+    """Freezes rows and columns above and to the left of a cell (e.g. "A2")."""
     return call_bridge("excel", "freeze_panes", {"sheet": sheet, "cell_ref": cell_ref})
 
 
@@ -1577,10 +1577,10 @@ def xl_add_chart(
     height: float,
     title: str | None = None,
 ) -> dict[str, Any]:
-    """Wstawia wykres oparty o zakres danych z tego samego arkusza.
+    """Inserts a chart based on a data range from the same sheet.
 
     'chart_type': column, bar, line, pie, area, scatter, doughnut, radar.
-    Pozycja i rozmiar w punktach.
+    Position and size in points.
     """
     return call_bridge(
         "excel",
@@ -1606,7 +1606,7 @@ def xl_create_table(
     has_headers: bool = True,
     style: str = "TableStyleMedium2",
 ) -> dict[str, Any]:
-    """Zamienia zakres w natywna tabele Excela (z filtrami i stylem)."""
+    """Turns a range into a native Excel table (with filters and a style)."""
     return call_bridge(
         "excel",
         "create_table",
@@ -1631,9 +1631,9 @@ def xl_add_pivot_table(
     dest_sheet: str | None = None,
     table_name: str = "TabelaPrzestawna1",
 ) -> dict[str, Any]:
-    """Tworzy tabele przestawna z zakresu zrodlowego (pierwszy wiersz to naglowki).
+    """Builds a pivot table from a source range (the first row is the headers).
 
-    'values' to nazwy pol albo obiekty {"field": "Kwota", "function": "average"}.
+    'values' is field names or objects {"field": "Amount", "function": "average"}.
     Funkcje: sum, count, average, max, min, product, count_numbers, std_dev.
     """
     return call_bridge(
@@ -1671,9 +1671,9 @@ def doc_set_paragraph_format(
     unit: str = "pt",
 ) -> dict[str, Any]:
     """Interlinia, wciecia i lamanie akapitow - podstawa skladu pracy dyplomowej.
-    Zasieg: 'style' zmienia definicje stylu (np. "Normal" = cala tresc naraz),
-    'paragraph_index' z 'count' obejmuje konkretne akapity, a brak obu -
-    wszystkie akapity albo, przy 'body_text_only', tylko tekst bez naglowkow.
+    Scope: 'style' changes a style definition (e.g. "Normal" = all body text at
+    once), 'paragraph_index' with 'count' covers specific paragraphs, and
+    neither means every paragraph or, with 'body_text_only', body text only.
     'line_spacing' 1.0 / 1.5 / 2.0 albo dowolna wielokrotnosc. Odstepy i wciecia
     w jednostce 'unit' (pt, cm, mm, in)."""
     return call_bridge(
@@ -1704,7 +1704,7 @@ def doc_set_heading_numbering(
     enable: bool = True, levels: int = 3, indent: float = 0.0
 ) -> dict[str, Any]:
     """Wlacza numeracje rozdzialow 1., 1.1, 1.1.1 powiazana ze stylami naglowkow.
-    Numerowane sa wylacznie akapity naglowkowe; tekst zwykly zostaje bez zmian.
+    Only heading paragraphs get numbered; body text is left alone.
     'enable=False' zdejmuje numeracje."""
     return call_bridge(
         "word",
@@ -1720,10 +1720,10 @@ def doc_add_caption(
     label: str = "figure",
     above: bool = False,
 ) -> dict[str, Any]:
-    """Numerowany podpis przy akapicie. 'label' to etykieta wbudowana ('figure',
-    'table', 'equation') albo dowolny wlasny tekst - wlasna etykieta trafia do
-    dokumentu doslownie, wiec praca po polsku uzywa label="Rysunek" albo
-    label="Tabela". Numeracja jest polem Worda, wiec kolejne podpisy
+    """A numbered caption next to a paragraph. 'label' is a built-in label
+    ('figure', 'table', 'equation') or any custom text - a custom label goes
+    into the document verbatim, so a localised document can pass
+    label="Figura" or similar. Numbering is a Word field, so later captions
     przenumerowuja wczesniejsze - po zmianach wywolaj doc_update_fields."""
     return call_bridge(
         "word",
@@ -1742,7 +1742,7 @@ def doc_insert_table_of_figures(
     label: str = "figure", position: Any = "end"
 ) -> dict[str, Any]:
     """Spis rysunkow albo tabel zbudowany z podpisow. 'position': start, end albo
-    numer akapitu, po ktorym spis ma trafic."""
+    a paragraph number to place the table after."""
     return call_bridge(
         "word",
         "insert_table_of_figures",
@@ -1753,7 +1753,7 @@ def doc_insert_table_of_figures(
 @server.tool()
 def doc_update_fields() -> dict[str, Any]:
     """Odswieza pola: spis tresci, spisy rysunkow i numeracje podpisow. Spis tresci
-    wstawiony przed napisaniem rozdzialow jest pusty do czasu odswiezenia."""
+    inserted before the chapters are written stays empty until refreshed."""
     return call_bridge("word", "update_fields", {})
 
 
@@ -1784,7 +1784,7 @@ def doc_set_page_setup(
 
 @server.tool()
 def doc_export_pdf(path: str, open_after: bool = False) -> dict[str, Any]:
-    """Eksportuje dokument do PDF-u; nie zmienia pliku otwartego w Wordzie."""
+    """Exports the document to PDF; does not change the file open in Word."""
     return call_bridge(
         "word", "export_pdf", {"path": path, "open_after": open_after}
     )
@@ -1792,7 +1792,7 @@ def doc_export_pdf(path: str, open_after: bool = False) -> dict[str, Any]:
 
 @server.tool()
 def doc_get_paragraph(paragraph_index: int, count: int = 1) -> dict[str, Any]:
-    """Czyta akapity wraz ze stylem, wyrownaniem i poziomem konspektu."""
+    """Reads paragraphs with their style, alignment and outline level."""
     return call_bridge(
         "word",
         "get_paragraph",
@@ -1802,7 +1802,7 @@ def doc_get_paragraph(paragraph_index: int, count: int = 1) -> dict[str, Any]:
 
 @server.tool()
 def doc_delete_paragraph(paragraph_index: int, count: int = 1) -> dict[str, Any]:
-    """Usuwa akapit albo kilka kolejnych, liczac od podanego indeksu."""
+    """Deletes a paragraph, or several in a row, from the given index."""
     return call_bridge(
         "word",
         "delete_paragraph",
@@ -1817,8 +1817,8 @@ def doc_insert_paragraph(
     after: bool = False,
     style: str | None = None,
 ) -> dict[str, Any]:
-    """Wstawia akapit w konkretnym miejscu. Bez 'paragraph_index' dopisuje na
-    koncu; z indeksem wstawia przed wskazanym akapitem, a 'after=True' za nim."""
+    """Inserts a paragraph at a specific place. Without 'paragraph_index' it
+    appends at the end; with an index it inserts before that paragraph, or after it with 'after=True'."""
     return call_bridge(
         "word",
         "insert_paragraph",
@@ -1838,7 +1838,7 @@ def doc_add_hyperlink(
     paragraph_index: int | None = None,
     tooltip: str | None = None,
 ) -> dict[str, Any]:
-    """Wstawia hiperlacze; bez 'paragraph_index' dopisuje je na koncu dokumentu."""
+    """Inserts a hyperlink; without 'paragraph_index' appends it at the end."""
     return call_bridge(
         "word",
         "add_hyperlink",
@@ -1853,7 +1853,7 @@ def doc_add_hyperlink(
 
 @server.tool()
 def doc_add_footnote(paragraph_index: int, text: str) -> dict[str, Any]:
-    """Dodaje przypis dolny na koncu wskazanego akapitu."""
+    """Adds a footnote at the end of the given paragraph."""
     return call_bridge(
         "word",
         "add_footnote",
@@ -1866,7 +1866,7 @@ def doc_insert_section_break(
     break_type: str = "next_page", paragraph_index: int | None = None
 ) -> dict[str, Any]:
     """Podzial sekcji: next_page, continuous, even_page, odd_page. Sekcje maja
-    wlasne marginesy, kolumny, naglowki i stopki."""
+    their own margins, columns, headers and footers."""
     return call_bridge(
         "word",
         "insert_section_break",
@@ -1878,7 +1878,7 @@ def doc_insert_section_break(
 def doc_set_columns(
     count: int = 1, section: int = 1, spacing: float | None = None
 ) -> dict[str, Any]:
-    """Ustawia liczbe kolumn tekstu w sekcji (uklad gazetowy); 'spacing' w punktach."""
+    """Sets the number of text columns in a section (newspaper layout); 'spacing' in points."""
     return call_bridge(
         "word",
         "set_columns",
@@ -1890,8 +1890,8 @@ def doc_set_columns(
 def doc_set_default_font(
     name: str | None = None, size: float | None = None
 ) -> dict[str, Any]:
-    """Zmienia czcionke stylu Normalny - podstawe calego dokumentu, zamiast
-    ustawiania czcionki akapit po akapicie."""
+    """Changes the Normal style font - the basis of the whole document, instead
+    of setting the font paragraph by paragraph."""
     return call_bridge("word", "set_default_font", {"name": name, "size": size})
 
 
@@ -1905,10 +1905,10 @@ def doc_format_table(
     column_widths: list[float] | None = None,
     autofit: bool | None = None,
 ) -> dict[str, Any]:
-    """Formatuje wstawiona tabele. 'style' przyjmuje nazwy niezalezne od jezyka:
+    """Formats an inserted table. 'style' takes language-independent names:
     normal, light_shading, light_list, light_grid, medium_shading1,
     medium_grid1..3, dark_list, colorful_shading, colorful_list, colorful_grid
-    (oraz warianty _accent1). Szerokosci kolumn w punktach."""
+    (plus the _accent1 variants). Column widths in points."""
     return call_bridge(
         "word",
         "format_table",
@@ -1926,68 +1926,68 @@ def doc_format_table(
 
 @server.tool()
 def doc_create_document(path: str, template: str | None = None) -> dict[str, Any]:
-    """Tworzy nowy dokument i zapisuje go pod podana sciezka (.docx).
+    """Creates a document and saves it at the given path (.docx).
 
-    Opcjonalny 'template' to sciezka do pliku .dotx.
+    The optional 'template' is a path to a .dotx file.
     """
     return call_bridge("word", "create_document", {"path": path, "template": template})
 
 
 @server.tool()
 def doc_open_document(path: str) -> dict[str, Any]:
-    """Otwiera istniejacy dokument; jesli jest juz otwarty, aktywuje jego okno."""
+    """Opens an existing document; if already open, activates its window."""
     return call_bridge("word", "open_document", {"path": path})
 
 
 @server.tool()
 def doc_save(path: str | None = None) -> dict[str, Any]:
-    """Zapisuje aktywny dokument; z 'path' robi zapis jako nowy plik."""
+    """Saves the current document; with 'path' saves it as a new file."""
     return call_bridge("word", "save", {"path": path})
 
 
 @server.tool()
 def doc_close(save: bool = True) -> dict[str, Any]:
-    """Zamyka aktywny dokument, domyslnie zapisujac zmiany."""
+    """Closes the current document, saving changes by default."""
     return call_bridge("word", "close", {"save": save})
 
 
 @server.tool()
 def doc_get_document_info() -> dict[str, Any]:
-    """Zwraca liczbe stron, slow i znakow, nazwe szablonu oraz sciezke pliku."""
+    """Returns page, word and character counts, the template name and file path."""
     return call_bridge("word", "get_document_info")
 
 
 @server.tool()
 def doc_get_full_text() -> dict[str, Any]:
-    """Zwraca caly tekst dokumentu."""
+    """Returns the whole document text."""
     return call_bridge("word", "get_full_text")
 
 
 @server.tool()
 def doc_get_outline() -> dict[str, Any]:
-    """Zwraca strukture naglowkow (poziom, tekst, indeks akapitu)."""
+    """Returns the heading structure (level, text, paragraph index)."""
     return call_bridge("word", "get_outline")
 
 
 @server.tool()
 def doc_add_paragraph(text: str, style: str | None = None) -> dict[str, Any]:
-    """Dopisuje akapit na koncu dokumentu.
+    """Appends a paragraph at the end of the document.
 
-    'style' przyjmuje nazwy angielskie (Normal, Heading 1, Quote, Caption)
-    takze w polskiej wersji Worda.
+    'style' accepts English names (Normal, Heading 1, Quote, Caption) even in a
+    localised Word.
     """
     return call_bridge("word", "add_paragraph", {"text": text, "style": style})
 
 
 @server.tool()
 def doc_add_heading(text: str, level: int = 1) -> dict[str, Any]:
-    """Dopisuje naglowek poziomu 1-9 (styl Heading N)."""
+    """Appends a level 1-9 heading (Heading N style)."""
     return call_bridge("word", "add_heading", {"text": text, "level": level})
 
 
 @server.tool()
 def doc_insert_page_break() -> dict[str, Any]:
-    """Wstawia twardy podzial strony na koncu dokumentu."""
+    """Inserts a hard page break at the end of the document."""
     return call_bridge("word", "insert_page_break")
 
 
@@ -1995,7 +1995,7 @@ def doc_insert_page_break() -> dict[str, Any]:
 def doc_find_replace(
     old_text: str, new_text: str, match_case: bool = False
 ) -> dict[str, Any]:
-    """Podmienia wszystkie wystapienia tekstu w dokumencie."""
+    """Replaces every occurrence of the text in the document."""
     return call_bridge(
         "word",
         "find_replace",
@@ -2014,7 +2014,7 @@ def doc_add_bullet_list(items: list[Any]) -> dict[str, Any]:
 
 @server.tool()
 def doc_add_numbered_list(items: list[Any]) -> dict[str, Any]:
-    """Dodaje liste numerowana (format 'items' jak w doc_add_bullet_list)."""
+    """Adds a numbered list ('items' format as in doc_add_bullet_list)."""
     return call_bridge("word", "add_numbered_list", {"items": items})
 
 
@@ -2028,7 +2028,7 @@ def doc_set_text_style(
     italic: bool | None = None,
     underline: bool | None = None,
 ) -> dict[str, Any]:
-    """Formatuje czcionke calego akapitu (indeksy z doc_get_outline)."""
+    """Formats the font of a whole paragraph (indexes from doc_get_outline)."""
     return call_bridge(
         "word",
         "set_text_style",
@@ -2046,7 +2046,7 @@ def doc_set_text_style(
 
 @server.tool()
 def doc_set_paragraph_alignment(paragraph_index: int, alignment: str) -> dict[str, Any]:
-    """Ustawia wyrownanie akapitu: left, center, right albo justify."""
+    """Sets paragraph alignment: left, center, right or justify."""
     return call_bridge(
         "word",
         "set_paragraph_alignment",
@@ -2068,7 +2068,7 @@ def doc_apply_style(paragraph_index: int, style_name: str) -> dict[str, Any]:
 def doc_set_page_margins(
     top: float, bottom: float, left: float, right: float, unit: str = "cm"
 ) -> dict[str, Any]:
-    """Ustawia marginesy strony. 'unit': cm, mm, in albo pt."""
+    """Sets page margins. 'unit': cm, mm, in or pt."""
     return call_bridge(
         "word",
         "set_page_margins",
@@ -2085,7 +2085,7 @@ def doc_insert_image(
     unit: str = "pt",
     own_paragraph: bool = True,
 ) -> dict[str, Any]:
-    """Wstawia obraz: 'inline' w tekscie albo 'float' jako obiekt plywajacy."""
+    """Inserts an image: 'inline' in the text or 'float' as a floating object."""
     return call_bridge(
         "word",
         "insert_image",
@@ -2107,7 +2107,7 @@ def doc_insert_table(
     data: list[list[Any]] | None = None,
     position: int | None = None,
 ) -> dict[str, Any]:
-    """Wstawia tabele z obramowaniem; bez 'position' trafia na koniec dokumentu."""
+    """Inserts a bordered table; without 'position' it goes to the end of the document."""
     return call_bridge(
         "word",
         "insert_table",
@@ -2117,13 +2117,13 @@ def doc_insert_table(
 
 @server.tool()
 def doc_insert_header(text: str, section: int = 1) -> dict[str, Any]:
-    """Ustawia tekst naglowka strony."""
+    """Sets the page header text."""
     return call_bridge("word", "insert_header", {"text": text, "section": section})
 
 
 @server.tool()
 def doc_insert_footer(text: str, section: int = 1) -> dict[str, Any]:
-    """Ustawia tekst stopki."""
+    """Sets the footer text."""
     return call_bridge("word", "insert_footer", {"text": text, "section": section})
 
 
@@ -2131,7 +2131,7 @@ def doc_insert_footer(text: str, section: int = 1) -> dict[str, Any]:
 def doc_add_page_numbers(
     alignment: str = "center", first_page: bool = True
 ) -> dict[str, Any]:
-    """Wstawia numery stron w stopce (left, center albo right)."""
+    """Inserts page numbers into the footer (left, center or right)."""
     return call_bridge(
         "word",
         "add_page_numbers",
@@ -2141,9 +2141,9 @@ def doc_add_page_numbers(
 
 @server.tool()
 def doc_insert_table_of_contents(levels: int = 3, position: Any = "start") -> dict[str, Any]:
-    """Wstawia spis tresci zbudowany ze stylow naglowkow.
+    """Inserts a table of contents built from heading styles.
 
-    'position': "start", "end" albo numer akapitu, po ktorym spis ma trafic -
+    'position': "start", "end" or a paragraph number to place it after -
     ten ostatni pozwala umiescic spis za strona tytulowa pracy dyplomowej.
     """
     return call_bridge(
@@ -2154,7 +2154,7 @@ def doc_insert_table_of_contents(levels: int = 3, position: Any = "start") -> di
 
 
 def main() -> int:
-    """Punkt wejscia serwera MCP (transport stdio)."""
+    """MCP server entry point (stdio transport)."""
     logging.basicConfig(
         level=os.environ.get("OFFICE_MCP_LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
@@ -2163,8 +2163,8 @@ def main() -> int:
 
     if sys.platform != "win32":
         print(
-            "office-mcp dziala tylko na Windows - automatyzacja Office opiera sie na "
-            f"COM, ktorego nie ma na platformie '{sys.platform}'.",
+            "office-mcp runs on Windows only - Office automation is built on "
+            f"COM, which does not exist on platform '{sys.platform}'.",
             file=sys.stderr,
         )
         return 1
