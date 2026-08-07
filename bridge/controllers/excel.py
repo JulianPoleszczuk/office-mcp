@@ -7,6 +7,7 @@ podaje sie w notacji A1 (``"A1:D10"``), tak jak w interfejsie Excela.
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
 from bridge.controllers.base import BaseController, action, is_connection_error
@@ -766,7 +767,26 @@ class ExcelController(BaseController):
             )
 
         self._activate(worksheet)
-        target.CopyPicture(XL_SCREEN, XL_BITMAP)
+
+        # CopyPicture bywa odrzucane, gdy schowek jest jeszcze zajety po
+        # poprzedniej operacji (kopiowanie zakresu, tabela przestawna).
+        # Jedno ponowienie po wyczyszczeniu trybu kopiowania wystarcza.
+        for attempt in range(2):
+            try:
+                target.CopyPicture(XL_SCREEN, XL_BITMAP)
+                break
+            except com_error as exc:
+                if attempt:
+                    raise UnsupportedOperationError(
+                        "Excel odrzucil kopiowanie zakresu do schowka - zamknij "
+                        "okna dialogowe i sprobuj ponownie"
+                    ) from exc
+                try:
+                    self.app.CutCopyMode = False
+                except com_error:
+                    pass
+                time.sleep(0.4)
+
         chart_object = worksheet.ChartObjects().Add(
             0, 0, float(target.Width) + 8, float(target.Height) + 8
         )
