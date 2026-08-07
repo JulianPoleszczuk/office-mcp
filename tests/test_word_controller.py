@@ -589,6 +589,146 @@ class TestErrorMapping:
             assert name in actions
 
 
+class TestImageAndCaption:
+    def test_image_width_respects_unit(self, word):
+        controller, _app, document = word
+        shape = MagicMock()
+        document.InlineShapes.AddPicture.return_value = shape
+
+        controller.dispatch(
+            "insert_image", {"image_path": __file__, "width": 12, "unit": "cm"}
+        )
+
+        assert shape.Width == pytest.approx(12 * 28.3464567)
+
+    def test_image_width_defaults_to_points(self, word):
+        controller, _app, document = word
+        shape = MagicMock()
+        document.InlineShapes.AddPicture.return_value = shape
+
+        controller.dispatch("insert_image", {"image_path": __file__, "width": 200})
+
+        assert shape.Width == pytest.approx(200)
+
+    def test_builtin_caption_label_uses_constant(self, word):
+        controller, app, document = word
+        document.Paragraphs = com_collection([make_paragraph("Obraz\r")])
+
+        result = controller.dispatch(
+            "add_caption", {"paragraph_index": 1, "text": "Wykres", "label": "figure"}
+        )
+
+        kwargs = document.Paragraphs(1).Range.InsertCaption.call_args.kwargs
+        assert kwargs["Label"] == -1  # wdCaptionFigure
+        assert kwargs["Title"] == ": Wykres"
+        assert result["label_name"] == -1
+        app.CaptionLabels.Add.assert_not_called()
+
+    def test_custom_caption_label_is_registered_once(self, word):
+        controller, app, document = word
+        builtin = MagicMock()
+        builtin.Name = "Figure"
+        app.CaptionLabels = com_collection([builtin])
+        document.Paragraphs = com_collection([make_paragraph("Obraz\r")])
+
+        controller.dispatch(
+            "add_caption", {"paragraph_index": 1, "text": "Wykres", "label": "Rysunek"}
+        )
+
+        # Wlasna etykieta musi trafic do slownika Worda, inaczej InsertCaption
+        # jej nie rozpozna.
+        app.CaptionLabels.Add.assert_called_once_with("Rysunek")
+        assert document.Paragraphs(1).Range.InsertCaption.call_args.kwargs["Label"] == "Rysunek"
+
+    def test_known_custom_label_is_not_added_twice(self, word):
+        controller, app, document = word
+        existing = MagicMock()
+        existing.Name = "Rysunek"
+        app.CaptionLabels = com_collection([existing])
+        document.Paragraphs = com_collection([make_paragraph("Obraz\r")])
+
+        controller.dispatch(
+            "add_caption", {"paragraph_index": 1, "text": "Wykres", "label": "Rysunek"}
+        )
+
+        app.CaptionLabels.Add.assert_not_called()
+
+    def test_image_gets_its_own_paragraph(self, word):
+        controller, _app, document = word
+        growing_paragraphs(document)
+
+        controller.dispatch("insert_image", {"image_path": __file__, "width": 200})
+
+        # Bez wlasnego akapitu obraz sklejalby sie z ostatnim zdaniem.
+        document.Content.InsertAfter.assert_called_once_with("")
+
+    def test_caption_above_uses_position_zero(self, word):
+        controller, app, document = word
+        app.CaptionLabels.return_value.Name = "Tabela"
+        document.Paragraphs = com_collection([make_paragraph("Tabela\r")])
+
+        controller.dispatch(
+            "add_caption",
+            {"paragraph_index": 1, "text": "Wyniki", "label": "table", "above": True},
+        )
+
+        assert document.Paragraphs(1).Range.InsertCaption.call_args.kwargs["Position"] == 0
+
+
+class TestListRange:
+    def test_list_range_spans_every_item(self, word):
+        controller, _app, document = word
+        items = growing_paragraphs(document)
+
+        controller.dispatch("add_numbered_list", {"items": ["A", "B", "C"]})
+
+        # Zakres musi obejmowac pierwsza i ostatnia pozycje, nie tylko ostatnia.
+        first, last = items[0], items[-1]
+        assert document.Range.call_args[0] == (first.Range.Start, last.Range.End)
+        assert len(items) == 3
+        document.Range.return_value.ListFormat.ApplyNumberDefault.assert_called_once()
+
+    def test_bullet_list_uses_bullet_default(self, word):
+        controller, _app, document = word
+        growing_paragraphs(document)
+
+        controller.dispatch("add_bullet_list", {"items": ["A", "B"]})
+
+        document.Range.return_value.ListFormat.ApplyBulletDefault.assert_called_once()
+
+    def test_nested_list_uses_gallery_template(self, word):
+        controller, app, document = word
+        items = growing_paragraphs(document)
+
+        controller.dispatch(
+            "add_numbered_list", {"items": ["A", {"text": "B", "level": 2}]}
+        )
+
+        # Listy domyslne sa jednopoziomowe - zejscie nizej wymaga szablonu.
+        document.Range.return_value.ListFormat.ApplyNumberDefault.assert_not_called()
+        assert app.ListGalleries.call_args[0][0] == 3  # wdOutlineNumberGallery
+        assert items[1].Range.ListFormat.ListLevelNumber == 2
+
+    def test_nested_bullets_use_bullet_gallery(self, word):
+        controller, app, document = word
+        growing_paragraphs(document)
+
+        controller.dispatch(
+            "add_bullet_list", {"items": ["A", {"text": "B", "level": 2}]}
+        )
+
+        assert app.ListGalleries.call_args[0][0] == 1  # wdBulletGallery
+
+    def test_flat_list_keeps_default_numbering(self, word):
+        controller, app, document = word
+        growing_paragraphs(document)
+
+        controller.dispatch("add_numbered_list", {"items": ["A", "B"]})
+
+        document.Range.return_value.ListFormat.ApplyNumberDefault.assert_called_once()
+        app.ListGalleries.assert_not_called()
+
+
 class TestParagraphEditing:
     def test_delete_paragraph_returns_removed_text(self, word):
         controller, _app, document = word
