@@ -28,7 +28,7 @@ from bridge.utils.com_helpers import (
     PP_SAVE_FORMATS,
     PP_TRANSITIONS,
     SHAPE_TYPES,
-    XL_LEGEND_POSITIONS,
+    apply_chart_format,
     bgr_to_hex,
     com_address,
     com_error,
@@ -58,8 +58,6 @@ MSO_ANIM_MEDIA_PLAY = 83
 MSO_SMARTART_NODE_BELOW = 5
 PP_AUTOSIZE_NONE = 0
 PP_AUTOSIZE_FIT = 1
-XL_CATEGORY_AXIS = 1
-XL_VALUE_AXIS = 2
 
 PP_ALIGNMENTS: dict[str, int] = {
     "left": 1,
@@ -1704,92 +1702,16 @@ class PowerPointController(BaseController):
                 f"Ksztalt {shape_id!r} nie jest wykresem - uzyj ppt_add_chart"
             )
 
-        chart = shape.Chart
-        applied: dict[str, Any] = {}
-
-        if series_colors:
-            count = int(chart.SeriesCollection().Count)
-            for position, color in enumerate(series_colors, start=1):
-                if position > count:
-                    break
-                series = chart.SeriesCollection(position)
-                series.Format.Fill.Visible = MSO_TRUE
-                series.Format.Fill.Solid()
-                series.Format.Fill.ForeColor.RGB = parse_color(color)
-            applied["series_colored"] = min(len(series_colors), count)
-
-        if background is not None:
-            if str(background).strip().lower() == "none":
-                chart.ChartArea.Format.Fill.Visible = MSO_FALSE
-                chart.ChartArea.Format.Line.Visible = MSO_FALSE
-                with_plot_area = True
-            else:
-                chart.ChartArea.Format.Fill.Solid()
-                chart.ChartArea.Format.Fill.ForeColor.RGB = parse_color(background)
-                with_plot_area = False
-            if with_plot_area:
-                try:
-                    chart.PlotArea.Format.Fill.Visible = MSO_FALSE
-                except com_error:
-                    pass
-            applied["background"] = str(background)
-
-        if title is not None:
-            chart.HasTitle = MSO_TRUE
-            chart.ChartTitle.Text = str(title)
-            applied["title"] = str(title)
-
-        if legend is not None:
-            if legend is False or str(legend).strip().lower() in ("none", "false"):
-                chart.HasLegend = MSO_FALSE
-                applied["legend"] = False
-            else:
-                chart.HasLegend = MSO_TRUE
-                if legend is not True:
-                    chart.Legend.Position = lookup_constant(
-                        legend, XL_LEGEND_POSITIONS, "legend"
-                    )
-                applied["legend"] = legend if legend is not True else "on"
-
-        if data_labels is not None:
-            count = int(chart.SeriesCollection().Count)
-            for position in range(1, count + 1):
-                chart.SeriesCollection(position).HasDataLabels = (
-                    MSO_TRUE if data_labels else MSO_FALSE
-                )
-            applied["data_labels"] = bool(data_labels)
-
-        if gridlines is not None:
-            try:
-                chart.Axes(XL_VALUE_AXIS).HasMajorGridlines = (
-                    MSO_TRUE if gridlines else MSO_FALSE
-                )
-                applied["gridlines"] = bool(gridlines)
-            except com_error:
-                applied["gridlines"] = None
-
-        if text_color is not None:
-            rgb = parse_color(text_color)
-            setters = [
-                lambda: setattr(chart.Axes(XL_CATEGORY_AXIS).TickLabels.Font, "Color", rgb),
-                lambda: setattr(chart.Axes(XL_VALUE_AXIS).TickLabels.Font, "Color", rgb),
-                lambda: setattr(chart.Legend.Font, "Color", rgb),
-                lambda: setattr(chart.ChartTitle.Font, "Color", rgb),
-            ]
-            # Etykiety danych maja wlasna czcionke - bez tego zostaja w kolorze
-            # motywu i odcinaja sie od reszty wykresu.
-            for position in range(1, int(chart.SeriesCollection().Count) + 1):
-                setters.append(
-                    lambda index=position: setattr(
-                        chart.SeriesCollection(index).DataLabels().Font, "Color", rgb
-                    )
-                )
-            for setter in setters:
-                try:
-                    setter()
-                except com_error:
-                    pass
-            applied["text_color"] = bgr_to_hex(rgb)
+        applied = apply_chart_format(
+            shape.Chart,
+            series_colors=series_colors,
+            text_color=text_color,
+            background=background,
+            legend=legend,
+            data_labels=data_labels,
+            gridlines=gridlines,
+            title=title,
+        )
 
         self._goto_slide(int(slide_index))
         return {

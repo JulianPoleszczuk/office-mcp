@@ -495,6 +495,68 @@ XL_COMPARISON_OPERATORS: dict[str, int] = {
     "less_equal": 8,
 }
 
+XL_VALIDATION_TYPES: dict[str, int] = {
+    "list": 3,
+    "whole_number": 1,
+    "integer": 1,
+    "decimal": 2,
+    "date": 4,
+    "time": 5,
+    "text_length": 6,
+    "custom": 7,
+}
+
+XL_VALIDATION_ALERTS: dict[str, int] = {
+    "stop": 1,
+    "warning": 2,
+    "information": 3,
+    "info": 3,
+}
+
+XL_SORT_ORDERS: dict[str, int] = {
+    "asc": 1,
+    "ascending": 1,
+    "desc": 2,
+    "descending": 2,
+}
+
+XL_PASTE_TYPES: dict[str, int] = {
+    "all": -4104,
+    "values": -4163,
+    "formats": -4122,
+}
+
+WD_TABLE_STYLES: dict[str, int] = {
+    "normal": -106,
+    "light_shading": -159,
+    "light_shading_accent1": -173,
+    "light_list": -160,
+    "light_list_accent1": -174,
+    "light_grid": -161,
+    "light_grid_accent1": -175,
+    "medium_shading1": -162,
+    "medium_shading1_accent1": -176,
+    "medium_shading2": -163,
+    "medium_shading2_accent1": -177,
+    "medium_list1": -164,
+    "medium_list1_accent1": -178,
+    "medium_list2": -165,
+    "medium_grid1": -166,
+    "medium_grid2": -167,
+    "medium_grid3": -168,
+    "dark_list": -169,
+    "colorful_shading": -170,
+    "colorful_list": -171,
+    "colorful_grid": -172,
+}
+
+WD_SECTION_BREAKS: dict[str, int] = {
+    "next_page": 2,
+    "continuous": 3,
+    "even_page": 4,
+    "odd_page": 5,
+}
+
 XL_SAVE_FORMATS: dict[str, int] = {
     ".xlsx": 51,
     ".xlsm": 52,
@@ -713,6 +775,110 @@ def lookup_constant(
 
     available = ", ".join(sorted(mapping))
     raise ValueError(f"Nieznane {label}: {name!r}. Dostepne: {available}")
+
+
+XL_CATEGORY_AXIS = 1
+XL_VALUE_AXIS = 2
+
+
+def apply_chart_format(
+    chart: Any,
+    series_colors: Any = None,
+    text_color: Any = None,
+    background: Any = None,
+    legend: Any = None,
+    data_labels: bool | None = None,
+    gridlines: bool | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Formatuje wykres - wspolne dla PowerPointa i Excela.
+
+    Model obiektowy wykresu jest w obu aplikacjach ten sam (pochodzi z Excela),
+    wiec logika siedzi tu, a kontrolery tylko dostarczaja obiekt ``Chart``.
+    """
+    applied: dict[str, Any] = {}
+    series_count = int(chart.SeriesCollection().Count)
+
+    if series_colors:
+        for position, color in enumerate(series_colors, start=1):
+            if position > series_count:
+                break
+            series = chart.SeriesCollection(position)
+            series.Format.Fill.Visible = MSO_TRUE
+            series.Format.Fill.Solid()
+            series.Format.Fill.ForeColor.RGB = parse_color(color)
+        applied["series_colored"] = min(len(series_colors), series_count)
+
+    if background is not None:
+        if str(background).strip().lower() == "none":
+            chart.ChartArea.Format.Fill.Visible = MSO_FALSE
+            chart.ChartArea.Format.Line.Visible = MSO_FALSE
+            try:
+                chart.PlotArea.Format.Fill.Visible = MSO_FALSE
+            except com_error:
+                pass
+        else:
+            chart.ChartArea.Format.Fill.Solid()
+            chart.ChartArea.Format.Fill.ForeColor.RGB = parse_color(background)
+        applied["background"] = str(background)
+
+    if title is not None:
+        chart.HasTitle = MSO_TRUE
+        chart.ChartTitle.Text = str(title)
+        applied["title"] = str(title)
+
+    if legend is not None:
+        if legend is False or str(legend).strip().lower() in ("none", "false"):
+            chart.HasLegend = MSO_FALSE
+            applied["legend"] = False
+        else:
+            chart.HasLegend = MSO_TRUE
+            if legend is not True:
+                chart.Legend.Position = lookup_constant(
+                    legend, XL_LEGEND_POSITIONS, "legend"
+                )
+            applied["legend"] = legend if legend is not True else "on"
+
+    if data_labels is not None:
+        for position in range(1, series_count + 1):
+            chart.SeriesCollection(position).HasDataLabels = (
+                MSO_TRUE if data_labels else MSO_FALSE
+            )
+        applied["data_labels"] = bool(data_labels)
+
+    if gridlines is not None:
+        try:
+            chart.Axes(XL_VALUE_AXIS).HasMajorGridlines = (
+                MSO_TRUE if gridlines else MSO_FALSE
+            )
+            applied["gridlines"] = bool(gridlines)
+        except com_error:
+            applied["gridlines"] = None
+
+    if text_color is not None:
+        rgb = parse_color(text_color)
+        setters = [
+            lambda: setattr(chart.Axes(XL_CATEGORY_AXIS).TickLabels.Font, "Color", rgb),
+            lambda: setattr(chart.Axes(XL_VALUE_AXIS).TickLabels.Font, "Color", rgb),
+            lambda: setattr(chart.Legend.Font, "Color", rgb),
+            lambda: setattr(chart.ChartTitle.Font, "Color", rgb),
+        ]
+        # Etykiety danych maja wlasna czcionke - bez tego zostaja w kolorze
+        # motywu i odcinaja sie od reszty wykresu.
+        for position in range(1, series_count + 1):
+            setters.append(
+                lambda index=position: setattr(
+                    chart.SeriesCollection(index).DataLabels().Font, "Color", rgb
+                )
+            )
+        for setter in setters:
+            try:
+                setter()
+            except com_error:
+                pass
+        applied["text_color"] = bgr_to_hex(rgb)
+
+    return applied
 
 
 def constant_name(value: Any, mapping: dict[str, int]) -> str | None:

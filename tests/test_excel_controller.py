@@ -658,3 +658,259 @@ class TestHelpers:
         target = MagicMock()
         target.Address.side_effect = [TypeError(), "$D$4"]
         assert com_address(target) == "$D$4"
+
+
+class TestColumnAndRowSizing:
+    def test_delete_columns_builds_span(self, excel):
+        controller, _app, _workbook, worksheet = excel
+
+        result = controller.dispatch(
+            "delete_columns", {"sheet": "Budzet", "start_col": "C", "count": 2}
+        )
+
+        worksheet.Columns.assert_called_with("C:D")
+        worksheet.Columns.return_value.Delete.assert_called_once()
+        assert result["deleted_columns"] == 2
+
+    def test_delete_columns_accepts_number(self, excel):
+        controller, _app, _workbook, worksheet = excel
+
+        controller.dispatch("delete_columns", {"sheet": "Budzet", "start_col": 3})
+
+        worksheet.Columns.assert_called_with("C:C")
+
+    def test_set_row_height_in_points(self, excel):
+        controller, _app, _workbook, worksheet = excel
+        worksheet.Rows.return_value.RowHeight = 30.0
+
+        result = controller.dispatch(
+            "set_row_height", {"sheet": "Budzet", "row": 1, "height": 30}
+        )
+
+        assert worksheet.Rows.call_args[0][0] == 1
+        assert result["height"] == 30.0
+
+    def test_set_row_height_auto_calls_autofit(self, excel):
+        controller, _app, _workbook, worksheet = excel
+
+        result = controller.dispatch(
+            "set_row_height", {"sheet": "Budzet", "row": 2, "height": "auto"}
+        )
+
+        worksheet.Rows.return_value.AutoFit.assert_called_once()
+        assert result["height"] == "auto"
+
+    def test_row_zero_is_rejected(self, excel):
+        controller, *_ = excel
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "set_row_height", {"sheet": "Budzet", "row": 0, "height": 20}
+            )
+
+
+class TestFindReplaceAndSort:
+    def test_empty_needle_is_rejected(self, excel):
+        controller, *_ = excel
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch("find_replace", {"old_text": "", "new_text": "x"})
+
+    def test_no_match_skips_replace(self, excel):
+        controller, _app, _workbook, worksheet = excel
+        worksheet.UsedRange.Find.return_value = None
+
+        result = controller.dispatch(
+            "find_replace",
+            {"old_text": "a", "new_text": "b", "sheet": "Budzet", "whole_cell": True},
+        )
+
+        worksheet.UsedRange.Replace.assert_not_called()
+        assert result["replaced"] == 0
+
+    def test_sort_maps_order_name(self, excel):
+        controller, _app, _workbook, worksheet = excel
+
+        controller.dispatch(
+            "sort_range",
+            {
+                "sheet": "Budzet",
+                "range_ref": "A1:C4",
+                "sort_by": "B",
+                "order": "descending",
+            },
+        )
+
+        kwargs = worksheet.ranges["A1:C4"].Sort.call_args.kwargs
+        assert kwargs["Order1"] == 2  # xlDescending
+        assert kwargs["Header"] == 1  # xlYes
+
+    def test_sort_pins_orientation_to_columns(self, excel):
+        controller, _app, _workbook, worksheet = excel
+
+        controller.dispatch(
+            "sort_range", {"sheet": "Budzet", "range_ref": "A1:C4", "sort_by": "B"}
+        )
+
+        # Bez jawnego xlSortColumns Excel uzywa "lepkiej" wartosci z poprzedniego
+        # sortowania i potrafi poprzestawiac kolumny zamiast wierszy.
+        kwargs = worksheet.ranges["A1:C4"].Sort.call_args.kwargs
+        assert kwargs["Orientation"] == 1
+        assert kwargs["MatchCase"] is False
+
+    def test_sort_without_headers(self, excel):
+        controller, _app, _workbook, worksheet = excel
+
+        controller.dispatch(
+            "sort_range",
+            {
+                "sheet": "Budzet",
+                "range_ref": "A1:C4",
+                "sort_by": 2,
+                "has_headers": False,
+            },
+        )
+
+        assert worksheet.ranges["A1:C4"].Sort.call_args.kwargs["Header"] == 2  # xlNo
+
+    def test_unknown_order_is_rejected(self, excel):
+        controller, *_ = excel
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "sort_range",
+                {
+                    "sheet": "Budzet",
+                    "range_ref": "A1:B2",
+                    "sort_by": 1,
+                    "order": "rosnaco",
+                },
+            )
+
+
+class TestCopyAndValidation:
+    def test_copy_all_uses_destination(self, excel):
+        controller, _app, _workbook, worksheet = excel
+
+        controller.dispatch(
+            "copy_range",
+            {"sheet": "Budzet", "range_ref": "A1:B2", "target_cell": "D1"},
+        )
+
+        source = worksheet.ranges["A1:B2"]
+        assert source.Copy.call_args.kwargs["Destination"] is worksheet.ranges["D1"]
+
+    def test_copy_values_uses_paste_special(self, excel):
+        controller, _app, _workbook, worksheet = excel
+
+        controller.dispatch(
+            "copy_range",
+            {
+                "sheet": "Budzet",
+                "range_ref": "A1:B2",
+                "target_cell": "D1",
+                "paste": "values",
+            },
+        )
+
+        worksheet.ranges["D1"].PasteSpecial.assert_called_once_with(-4163)
+
+    def test_unknown_paste_type_is_rejected(self, excel):
+        controller, *_ = excel
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "copy_range",
+                {
+                    "sheet": "Budzet",
+                    "range_ref": "A1:B2",
+                    "target_cell": "D1",
+                    "paste": "wszystko",
+                },
+            )
+
+    def test_validation_list_joins_values(self, excel):
+        controller, _app, _workbook, worksheet = excel
+
+        result = controller.dispatch(
+            "add_data_validation",
+            {"sheet": "Budzet", "range_ref": "E1:E9", "values": ["tak", "nie"]},
+        )
+
+        args = worksheet.ranges["E1:E9"].Validation.Add.call_args[0]
+        assert args[0] == 3  # xlValidateList
+        assert args[3] == "tak,nie"
+        assert result["formula1"] == "tak,nie"
+
+    def test_validation_without_values_or_formula_is_rejected(self, excel):
+        controller, *_ = excel
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "add_data_validation", {"sheet": "Budzet", "range_ref": "E1"}
+            )
+
+    def test_validation_replaces_previous_rule(self, excel):
+        controller, _app, _workbook, worksheet = excel
+
+        controller.dispatch(
+            "add_data_validation",
+            {"sheet": "Budzet", "range_ref": "E1", "values": "tak,nie"},
+        )
+
+        worksheet.ranges["E1"].Validation.Delete.assert_called_once()
+
+
+class TestExcelExport:
+    def test_export_pdf_workbook_scope(self, excel, tmp_path):
+        controller, _app, workbook, _worksheet = excel
+        target = tmp_path / "raport.pdf"
+
+        result = controller.dispatch("export_pdf", {"path": str(target)})
+
+        workbook.ExportAsFixedFormat.assert_called_once_with(0, str(target))
+        assert result["scope"] == "workbook"
+
+    def test_export_pdf_sheet_scope(self, excel, tmp_path):
+        controller, _app, _workbook, worksheet = excel
+
+        result = controller.dispatch(
+            "export_pdf", {"path": str(tmp_path / "a.pdf"), "sheet": "Budzet"}
+        )
+
+        worksheet.ExportAsFixedFormat.assert_called_once()
+        assert result["scope"] == "sheet"
+
+    def test_export_pdf_range_without_sheet_is_rejected(self, excel, tmp_path):
+        controller, *_ = excel
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "export_pdf", {"path": str(tmp_path / "a.pdf"), "range_ref": "A1:B2"}
+            )
+
+    def test_range_image_rejects_bad_extension(self, excel, tmp_path):
+        controller, *_ = excel
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "export_range_image",
+                {
+                    "sheet": "Budzet",
+                    "range_ref": "A1:B2",
+                    "path": str(tmp_path / "a.svg"),
+                },
+            )
+
+    def test_range_image_removes_helper_chart(self, excel, tmp_path):
+        controller, _app, _workbook, worksheet = excel
+        target = tmp_path / "zakres.png"
+        chart_object = worksheet.ChartObjects.return_value.Add.return_value
+
+        controller.dispatch(
+            "export_range_image",
+            {"sheet": "Budzet", "range_ref": "A1:B2", "path": str(target)},
+        )
+
+        chart_object.Chart.Export.assert_called_once_with(str(target), "PNG")
+        chart_object.Delete.assert_called_once()
+
+    def test_format_chart_without_charts_is_rejected(self, excel):
+        controller, _app, _workbook, worksheet = excel
+        worksheet.ChartObjects.return_value.Count = 0
+
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch("format_chart", {"sheet": "Budzet"})

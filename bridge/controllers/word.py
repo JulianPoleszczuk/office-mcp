@@ -15,7 +15,10 @@ from bridge.utils.com_helpers import (
     WD_ALIGNMENTS,
     WD_BUILTIN_STYLES,
     WD_SAVE_FORMATS,
+    WD_SECTION_BREAKS,
+    WD_TABLE_STYLES,
     com_error,
+    lookup_constant,
     parse_color,
     points,
     save_format_for,
@@ -37,6 +40,8 @@ WD_STATISTIC_PAGES = 2
 WD_STATISTIC_CHARACTERS = 3
 WD_OUTLINE_BODY_TEXT = 10
 WD_LINE_STYLE_SINGLE = 1
+WD_EXPORT_FORMAT_PDF = 17
+WD_STYLE_NORMAL = -1
 
 
 class WordController(BaseController):
@@ -545,6 +550,299 @@ class WordController(BaseController):
             "position": mode,
             "width": round(float(shape.Width), 2),
             "height": round(float(shape.Height), 2),
+        }
+
+    @action("export_pdf")
+    def export_pdf(self, path: str, open_after: bool = False) -> dict[str, Any]:
+        """Eksportuje dokument do PDF-u bez zmiany biezacego pliku.
+
+        Word - w odroznieniu od PowerPointa - wystawia ``ExportAsFixedFormat``
+        w formie wywolywalnej przez pywin32, wiec nie trzeba tego obchodzic.
+        """
+        document = self.document()
+        target = self.resolve_target_path(path)
+
+        with self.alerts_suppressed():
+            document.ExportAsFixedFormat(target, WD_EXPORT_FORMAT_PDF, bool(open_after))
+
+        return {
+            "path": target,
+            "pages": int(document.ComputeStatistics(WD_STATISTIC_PAGES)),
+            "size_bytes": os.path.getsize(target) if os.path.isfile(target) else None,
+        }
+
+    @action("get_paragraph")
+    def get_paragraph(self, paragraph_index: int, count: int = 1) -> dict[str, Any]:
+        """Czyta akapity wraz ze stylem i wyrownaniem - bez zgadywania po tekscie."""
+        document = self.document()
+        total = int(document.Paragraphs.Count)
+        first = self.require_index(paragraph_index, total, "paragraph_index")
+        last = min(total, first + max(1, int(count)) - 1)
+
+        paragraphs: list[dict[str, Any]] = []
+        for index in range(first, last + 1):
+            paragraph = document.Paragraphs(index)
+            entry: dict[str, Any] = {
+                "index": index,
+                "text": to_python(paragraph.Range.Text).rstrip("\r\x07"),
+            }
+            try:
+                entry["style"] = to_python(paragraph.Style.NameLocal)
+            except com_error:
+                entry["style"] = None
+            try:
+                entry["outline_level"] = int(paragraph.OutlineLevel)
+                entry["alignment"] = int(paragraph.Alignment)
+            except com_error:
+                pass
+            paragraphs.append(entry)
+
+        return {
+            "paragraph_count": total,
+            "returned": len(paragraphs),
+            "paragraphs": paragraphs,
+        }
+
+    @action("delete_paragraph")
+    def delete_paragraph(self, paragraph_index: int, count: int = 1) -> dict[str, Any]:
+        """Usuwa akapit (albo kilka kolejnych) - dokument nie jest juz tylko do dopisywania."""
+        document = self.document()
+        total = int(document.Paragraphs.Count)
+        first = self.require_index(paragraph_index, total, "paragraph_index")
+        amount = max(1, int(count))
+
+        removed: list[str] = []
+        for _ in range(amount):
+            if int(document.Paragraphs.Count) < first:
+                break
+            paragraph = document.Paragraphs(first)
+            removed.append(to_python(paragraph.Range.Text).rstrip("\r\x07"))
+            paragraph.Range.Delete()
+
+        return {
+            "deleted": len(removed),
+            "texts": removed,
+            "paragraph_count": int(document.Paragraphs.Count),
+        }
+
+    @action("insert_paragraph")
+    def insert_paragraph(
+        self,
+        text: str,
+        paragraph_index: int | None = None,
+        after: bool = False,
+        style: str | None = None,
+    ) -> dict[str, Any]:
+        """Wstawia akapit w konkretnym miejscu, a nie tylko na koncu dokumentu.
+
+        Bez ``paragraph_index`` zachowuje sie jak ``add_paragraph``. Z indeksem
+        wstawia przed wskazanym akapitem, a przy ``after=True`` - za nim.
+        """
+        document = self.document()
+
+        if paragraph_index is None:
+            paragraph = self._append_paragraph(document, text)
+            position = int(document.Paragraphs.Count)
+        else:
+            total = int(document.Paragraphs.Count)
+            index = self.require_index(paragraph_index, total, "paragraph_index")
+            anchor = document.Paragraphs(index).Range
+
+            if after:
+                anchor.InsertParagraphAfter()
+                position = index + 1
+            else:
+                anchor.InsertParagraphBefore()
+                position = index
+
+            document.Paragraphs(position).Range.InsertAfter(str(text))
+
+        applied_style = None
+        if style:
+            applied_style = self._apply_named_style(
+                document.Paragraphs(position).Range, style
+            )
+
+        return {
+            "paragraph_index": position,
+            "text": str(text),
+            "style": applied_style,
+            "paragraph_count": int(document.Paragraphs.Count),
+        }
+
+    @action("add_hyperlink")
+    def add_hyperlink(
+        self,
+        url: str,
+        text: str | None = None,
+        paragraph_index: int | None = None,
+        tooltip: str | None = None,
+    ) -> dict[str, Any]:
+        """Wstawia hiperlacze; bez ``paragraph_index`` dopisuje je na koncu."""
+        if not url:
+            raise InvalidReferenceError("'url' nie moze byc puste")
+
+        document = self.document()
+        if paragraph_index is None:
+            anchor = self._end_range(document)
+        else:
+            total = int(document.Paragraphs.Count)
+            index = self.require_index(paragraph_index, total, "paragraph_index")
+            anchor = document.Paragraphs(index).Range
+            anchor.Collapse(WD_COLLAPSE_END)
+
+        link = document.Hyperlinks.Add(
+            Anchor=anchor,
+            Address=str(url),
+            ScreenTip=str(tooltip) if tooltip else "",
+            TextToDisplay=str(text) if text else str(url),
+        )
+
+        return {
+            "url": to_python(link.Address),
+            "text": str(text) if text else str(url),
+            "tooltip": tooltip,
+            "paragraph_index": paragraph_index or int(document.Paragraphs.Count),
+        }
+
+    @action("add_footnote")
+    def add_footnote(self, paragraph_index: int, text: str) -> dict[str, Any]:
+        """Dodaje przypis dolny na koncu wskazanego akapitu."""
+        document = self.document()
+        total = int(document.Paragraphs.Count)
+        index = self.require_index(paragraph_index, total, "paragraph_index")
+
+        anchor = document.Paragraphs(index).Range
+        anchor.Collapse(WD_COLLAPSE_END)
+        footnote = document.Footnotes.Add(Range=anchor, Text=str(text))
+
+        return {
+            "paragraph_index": index,
+            "footnote_index": int(footnote.Index),
+            "text": str(text),
+            "footnote_count": int(document.Footnotes.Count),
+        }
+
+    @action("insert_section_break")
+    def insert_section_break(
+        self, break_type: str = "next_page", paragraph_index: int | None = None
+    ) -> dict[str, Any]:
+        """Podzial sekcji: ``next_page``, ``continuous``, ``even_page``, ``odd_page``."""
+        document = self.document()
+        constant = lookup_constant(break_type, WD_SECTION_BREAKS, "break_type")
+
+        if paragraph_index is None:
+            target = self._end_range(document)
+        else:
+            total = int(document.Paragraphs.Count)
+            index = self.require_index(paragraph_index, total, "paragraph_index")
+            target = document.Paragraphs(index).Range
+            target.Collapse(WD_COLLAPSE_END)
+
+        target.InsertBreak(constant)
+
+        return {
+            "break_type": break_type,
+            "section_count": int(document.Sections.Count),
+            "paragraph_count": int(document.Paragraphs.Count),
+        }
+
+    @action("set_columns")
+    def set_columns(
+        self, count: int = 1, section: int = 1, spacing: float | None = None
+    ) -> dict[str, Any]:
+        """Ustawia liczbe kolumn tekstu w sekcji (uklad gazetowy)."""
+        document = self.document()
+        index = self.require_index(section, int(document.Sections.Count), "section")
+        columns = document.Sections(index).PageSetup.TextColumns
+
+        columns.SetCount(max(1, int(count)))
+        if spacing is not None:
+            columns.Spacing = points(spacing, "pt")
+
+        return {
+            "section": index,
+            "columns": int(columns.Count),
+            "spacing": round(float(columns.Spacing), 2),
+        }
+
+    @action("set_default_font")
+    def set_default_font(
+        self, name: str | None = None, size: float | None = None
+    ) -> dict[str, Any]:
+        """Zmienia czcionke stylu Normalny - podstawa calego dokumentu."""
+        if not name and size is None:
+            raise InvalidReferenceError("Podaj 'name', 'size' albo oba")
+
+        document = self.document()
+        font = document.Styles(WD_STYLE_NORMAL).Font
+
+        if name:
+            font.Name = str(name)
+        if size is not None:
+            font.Size = float(size)
+
+        return {
+            "name": to_python(font.Name),
+            "size": round(float(font.Size), 1),
+        }
+
+    @action("format_table")
+    def format_table(
+        self,
+        table_index: int = 1,
+        style: str | None = None,
+        borders: bool | None = None,
+        header_bold: bool | None = None,
+        header_fill: Any = None,
+        column_widths: list[float] | None = None,
+        autofit: bool | None = None,
+    ) -> dict[str, Any]:
+        """Formatuje wstawiona tabele - styl, obramowanie, naglowek, szerokosci.
+
+        ``style`` przyjmuje nazwy niezalezne od jezyka (``light_grid``,
+        ``medium_shading1``, ``colorful_list``...), bo wbudowane style tabel
+        Word tlumaczy i przypisanie po nazwie po angielsku konczy sie bledem
+        "element o podanej nazwie nie istnieje".
+        """
+        document = self.document()
+        total = int(document.Tables.Count)
+        if not total:
+            raise InvalidReferenceError("Dokument nie zawiera tabel")
+
+        index = self.require_index(table_index, total, "table_index")
+        table = document.Tables(index)
+        applied: dict[str, Any] = {}
+
+        if style is not None:
+            table.Style = lookup_constant(style, WD_TABLE_STYLES, "style")
+            applied["style"] = style
+        if borders is not None:
+            line_style = WD_LINE_STYLE_SINGLE if borders else 0
+            table.Borders.InsideLineStyle = line_style
+            table.Borders.OutsideLineStyle = line_style
+            applied["borders"] = bool(borders)
+        if header_bold is not None:
+            table.Rows(1).Range.Font.Bold = bool(header_bold)
+            applied["header_bold"] = bool(header_bold)
+        if header_fill is not None:
+            table.Rows(1).Shading.BackgroundPatternColor = parse_color(header_fill)
+            applied["header_fill"] = str(header_fill)
+        if column_widths:
+            for position, width in enumerate(column_widths, start=1):
+                if position > int(table.Columns.Count):
+                    break
+                table.Columns(position).Width = points(width, "pt")
+            applied["column_widths"] = len(column_widths)
+        if autofit:
+            table.AutoFitBehavior(2)  # wdAutoFitWindow
+            applied["autofit"] = True
+
+        return {
+            "table_index": index,
+            "rows": int(table.Rows.Count),
+            "columns": int(table.Columns.Count),
+            "applied": applied,
         }
 
     @action("insert_table")

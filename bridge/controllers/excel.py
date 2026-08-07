@@ -13,7 +13,12 @@ from bridge.controllers.base import BaseController, action, is_connection_error
 from bridge.utils.com_helpers import (
     CHART_TYPES,
     XL_COMPARISON_OPERATORS,
+    XL_PASTE_TYPES,
     XL_SAVE_FORMATS,
+    XL_SORT_ORDERS,
+    XL_VALIDATION_ALERTS,
+    XL_VALIDATION_TYPES,
+    apply_chart_format,
     column_index,
     column_letter,
     com_address,
@@ -34,6 +39,13 @@ from bridge.utils.errors import (
 
 XL_CELL_VALUE = 1
 XL_EXPRESSION = 2
+XL_WHOLE = 1
+XL_PART = 2
+XL_BETWEEN = 1
+XL_TYPE_PDF = 0
+XL_SCREEN = 1
+XL_BITMAP = 2
+XL_SORT_COLUMNS = 1
 XL_TEXT_STRING = 9
 XL_CONTAINS = 0
 XL_SRC_RANGE = 1
@@ -423,6 +435,416 @@ class ExcelController(BaseController):
         worksheet.Columns(span).Insert()
         self._activate(worksheet)
         return {"sheet": to_python(worksheet.Name), "inserted_columns": amount, "at": span}
+
+    @action("delete_columns")
+    def delete_columns(self, sheet: Any, start_col: Any, count: int = 1) -> dict[str, Any]:
+        """Usuwa kolumny; ``start_col`` przyjmuje litere albo numer."""
+        first = _column_number(start_col)
+        amount = max(1, int(count))
+        worksheet = self.worksheet(sheet)
+        span = f"{column_letter(first)}:{column_letter(first + amount - 1)}"
+        worksheet.Columns(span).Delete()
+        self._activate(worksheet)
+        return {"sheet": to_python(worksheet.Name), "deleted_columns": amount, "at": span}
+
+    @action("set_row_height")
+    def set_row_height(self, sheet: Any, row: Any, height: Any) -> dict[str, Any]:
+        """Wysokosc wiersza w punktach; ``height="auto"`` dopasowuje do tresci."""
+        worksheet = self.worksheet(sheet)
+        index = int(row)
+        if index < 1:
+            raise InvalidReferenceError("Numer wiersza musi byc >= 1")
+
+        target = worksheet.Rows(index)
+        if isinstance(height, str) and height.strip().lower() in ("auto", "autofit"):
+            target.AutoFit()
+            applied = "auto"
+        else:
+            target.RowHeight = float(height)
+            applied = round(float(target.RowHeight), 2)
+
+        self._activate(worksheet)
+        return {"sheet": to_python(worksheet.Name), "row": index, "height": applied}
+
+    @action("find_replace")
+    def find_replace(
+        self,
+        old_text: str,
+        new_text: str,
+        sheet: Any = None,
+        range_ref: str | None = None,
+        match_case: bool = False,
+        whole_cell: bool = False,
+    ) -> dict[str, Any]:
+        """Podmienia tekst; bez ``sheet`` przechodzi przez wszystkie arkusze.
+
+        ``whole_cell=True`` wymaga, zeby cala zawartosc komorki byla rowna
+        szukanemu tekstowi - inaczej podmieniany jest kazdy fragment.
+        """
+        if not old_text:
+            raise InvalidReferenceError("'old_text' nie moze byc puste")
+
+        workbook = self.workbook()
+        if sheet is None:
+            sheets = [
+                workbook.Worksheets(index)
+                for index in range(1, workbook.Worksheets.Count + 1)
+            ]
+        else:
+            sheets = [self.worksheet(sheet)]
+
+        look_at = XL_WHOLE if whole_cell else XL_PART
+        replaced_in: list[str] = []
+        for worksheet in sheets:
+            target = (
+                self.range_of(worksheet, range_ref) if range_ref else worksheet.UsedRange
+            )
+            before = _count_matches(target, old_text, look_at, match_case)
+            if not before:
+                continue
+            target.Replace(
+                What=old_text,
+                Replacement=new_text,
+                LookAt=look_at,
+                MatchCase=bool(match_case),
+            )
+            replaced_in.append(f"{to_python(worksheet.Name)}:{before}")
+
+        total = sum(int(entry.rsplit(":", 1)[1]) for entry in replaced_in)
+        return {
+            "replaced": total,
+            "sheets": [entry.rsplit(":", 1)[0] for entry in replaced_in],
+            "whole_cell": bool(whole_cell),
+        }
+
+    @action("sort_range")
+    def sort_range(
+        self,
+        sheet: Any,
+        range_ref: str,
+        sort_by: Any,
+        order: str = "ascending",
+        has_headers: bool = True,
+    ) -> dict[str, Any]:
+        """Sortuje zakres po kolumnie ``sort_by`` (litera, numer albo adres komorki)."""
+        worksheet = self.worksheet(sheet)
+        target = self.range_of(worksheet, range_ref)
+
+        if isinstance(sort_by, str) and any(char.isdigit() for char in sort_by):
+            key = self.range_of(worksheet, sort_by)
+        else:
+            column = _column_number(sort_by)
+            key = worksheet.Cells(int(target.Row), column)
+
+        # Orientation i MatchCase sa "lepkie" - Excel pamieta je z poprzedniego
+        # sortowania w sesji. Bez jawnego xlSortColumns potrafi posortowac
+        # lewo-prawo i poprzestawiac kolumny zamiast wierszy.
+        target.Sort(
+            Key1=key,
+            Order1=lookup_constant(order, XL_SORT_ORDERS, "order"),
+            Header=XL_YES if has_headers else XL_NO,
+            Orientation=XL_SORT_COLUMNS,
+            MatchCase=False,
+        )
+
+        self._activate(worksheet)
+        return {
+            "sheet": to_python(worksheet.Name),
+            "range": com_address(target),
+            "sorted_by": com_address(key),
+            "order": order,
+            "has_headers": bool(has_headers),
+        }
+
+    @action("set_autofilter")
+    def set_autofilter(
+        self, sheet: Any, range_ref: str | None = None, enable: bool = True
+    ) -> dict[str, Any]:
+        """Wlacza albo wylacza autofiltr; bez ``range_ref`` obejmuje uzyty obszar."""
+        worksheet = self.worksheet(sheet)
+        target = self.range_of(worksheet, range_ref) if range_ref else worksheet.UsedRange
+
+        already = bool(worksheet.AutoFilterMode)
+        if enable and not already:
+            target.AutoFilter(1)
+        elif not enable and already:
+            worksheet.AutoFilterMode = False
+
+        self._activate(worksheet)
+        return {
+            "sheet": to_python(worksheet.Name),
+            "range": com_address(target),
+            "enabled": bool(worksheet.AutoFilterMode),
+        }
+
+    @action("copy_range")
+    def copy_range(
+        self,
+        sheet: Any,
+        range_ref: str,
+        target_cell: str,
+        target_sheet: Any = None,
+        paste: str = "all",
+    ) -> dict[str, Any]:
+        """Kopiuje zakres; ``paste`` to ``all``, ``values`` albo ``formats``."""
+        source_sheet = self.worksheet(sheet)
+        source = self.range_of(source_sheet, range_ref)
+        destination_sheet = (
+            self.worksheet(target_sheet) if target_sheet is not None else source_sheet
+        )
+        destination = self.range_of(destination_sheet, target_cell)
+        paste_type = lookup_constant(paste, XL_PASTE_TYPES, "paste")
+
+        if paste_type == XL_PASTE_TYPES["all"]:
+            source.Copy(Destination=destination)
+        else:
+            source.Copy()
+            destination.PasteSpecial(paste_type)
+            try:
+                self.app.CutCopyMode = False
+            except com_error:
+                pass
+
+        self._activate(destination_sheet)
+        return {
+            "source": f"{to_python(source_sheet.Name)}!{com_address(source)}",
+            "target": f"{to_python(destination_sheet.Name)}!{com_address(destination)}",
+            "paste": paste,
+            "rows": int(source.Rows.Count),
+            "columns": int(source.Columns.Count),
+        }
+
+    @action("add_data_validation")
+    def add_data_validation(
+        self,
+        sheet: Any,
+        range_ref: str,
+        validation_type: str = "list",
+        values: Any = None,
+        formula: str | None = None,
+        formula2: str | None = None,
+        operator: str | None = None,
+        alert: str = "stop",
+        input_message: str | None = None,
+        error_message: str | None = None,
+    ) -> dict[str, Any]:
+        """Sprawdzanie poprawnosci danych - lista rozwijana albo zakres wartosci.
+
+        Dla ``validation_type="list"`` wystarczy ``values`` (lista pozycji albo
+        odwolanie do zakresu). Pozostale typy (``whole_number``, ``decimal``,
+        ``date``, ``time``, ``text_length``, ``custom``) uzywaja ``formula``,
+        ``formula2`` i ``operator``.
+        """
+        worksheet = self.worksheet(sheet)
+        target = self.range_of(worksheet, range_ref)
+        type_constant = lookup_constant(
+            validation_type, XL_VALIDATION_TYPES, "validation_type"
+        )
+
+        first = formula
+        if type_constant == XL_VALIDATION_TYPES["list"] and first is None:
+            if isinstance(values, (list, tuple)):
+                first = ",".join(str(value) for value in values)
+            elif values is not None:
+                first = str(values)
+        if first is None:
+            raise InvalidReferenceError(
+                "Podaj 'values' (dla listy) albo 'formula' dla pozostalych typow"
+            )
+
+        operator_constant = (
+            lookup_constant(operator, XL_COMPARISON_OPERATORS, "operator")
+            if operator
+            else XL_BETWEEN
+        )
+
+        target.Validation.Delete()
+        target.Validation.Add(
+            type_constant,
+            lookup_constant(alert, XL_VALIDATION_ALERTS, "alert"),
+            operator_constant,
+            first,
+            formula2,
+        )
+
+        if input_message:
+            target.Validation.InputTitle = ""
+            target.Validation.InputMessage = str(input_message)
+            target.Validation.ShowInput = True
+        if error_message:
+            target.Validation.ErrorMessage = str(error_message)
+            target.Validation.ShowError = True
+
+        self._activate(worksheet)
+        return {
+            "sheet": to_python(worksheet.Name),
+            "range": com_address(target),
+            "type": validation_type,
+            "formula1": first,
+            "alert": alert,
+        }
+
+    @action("get_cell_formula")
+    def get_cell_formula(self, sheet: Any, range_ref: str) -> dict[str, Any]:
+        """Zwraca formuly zakresu (a nie wyliczone wartosci) wraz z wynikami."""
+        worksheet = self.worksheet(sheet)
+        target = self.range_of(worksheet, range_ref)
+
+        formulas: list[list[Any]] = []
+        values: list[list[Any]] = []
+        for row in range(1, int(target.Rows.Count) + 1):
+            formula_row: list[Any] = []
+            value_row: list[Any] = []
+            for column in range(1, int(target.Columns.Count) + 1):
+                cell = target.Cells(row, column)
+                formula_row.append(to_python(cell.Formula))
+                value_row.append(to_python(cell.Value))
+            formulas.append(formula_row)
+            values.append(value_row)
+
+        return {
+            "sheet": to_python(worksheet.Name),
+            "range": com_address(target),
+            "formulas": formulas,
+            "values": values,
+        }
+
+    @action("export_pdf")
+    def export_pdf(
+        self, path: str, sheet: Any = None, range_ref: str | None = None
+    ) -> dict[str, Any]:
+        """Eksportuje skoroszyt, arkusz albo zakres do PDF-u.
+
+        W przeciwienstwie do PowerPointa Excel wystawia ``ExportAsFixedFormat``
+        w formie wywolywalnej przez pywin32, wiec nie trzeba obchodzic tego
+        przez ``SaveCopyAs``.
+        """
+        target_path = self.resolve_target_path(path)
+
+        if range_ref is not None:
+            if sheet is None:
+                raise InvalidReferenceError("'range_ref' wymaga podania 'sheet'")
+            source = self.range_of(self.worksheet(sheet), range_ref)
+            scope = "range"
+        elif sheet is not None:
+            source = self.worksheet(sheet)
+            scope = "sheet"
+        else:
+            source = self.workbook()
+            scope = "workbook"
+
+        with self.alerts_suppressed():
+            source.ExportAsFixedFormat(XL_TYPE_PDF, target_path)
+
+        return {
+            "path": target_path,
+            "scope": scope,
+            "size_bytes": os.path.getsize(target_path)
+            if os.path.isfile(target_path)
+            else None,
+        }
+
+    @action("export_range_image")
+    def export_range_image(
+        self, sheet: Any, range_ref: str, path: str
+    ) -> dict[str, Any]:
+        """Zapisuje zakres jako obraz PNG - podglad dla modelu.
+
+        Excel nie ma bezposredniego eksportu zakresu do obrazu, wiec zakres
+        trafia do schowka jako bitmapa, potem na tymczasowy obiekt wykresu,
+        ktory juz potrafi ``Export``. Wykres jest usuwany na koncu.
+        """
+        worksheet = self.worksheet(sheet)
+        target = self.range_of(worksheet, range_ref)
+        target_path = self.resolve_target_path(path)
+
+        extension = os.path.splitext(target_path)[1].lower()
+        if extension not in (".png", ".jpg", ".jpeg", ".gif"):
+            raise InvalidReferenceError(
+                f"Nieobslugiwane rozszerzenie obrazu: {extension or '(brak)'}. "
+                "Dostepne: .png, .jpg, .jpeg, .gif"
+            )
+
+        target.CopyPicture(XL_SCREEN, XL_BITMAP)
+        chart_object = worksheet.ChartObjects().Add(
+            0, 0, float(target.Width) + 8, float(target.Height) + 8
+        )
+        try:
+            chart_object.Chart.Paste()
+            chart_object.Chart.Export(
+                target_path, "JPG" if extension in (".jpg", ".jpeg") else extension[1:].upper()
+            )
+        finally:
+            try:
+                chart_object.Delete()
+            except com_error:
+                pass
+            try:
+                self.app.CutCopyMode = False
+            except com_error:
+                pass
+
+        self._activate(worksheet)
+        return {
+            "sheet": to_python(worksheet.Name),
+            "range": com_address(target),
+            "path": target_path,
+            "size_bytes": os.path.getsize(target_path)
+            if os.path.isfile(target_path)
+            else None,
+        }
+
+    @action("format_chart")
+    def format_chart(
+        self,
+        sheet: Any,
+        chart: Any = 1,
+        series_colors: list[Any] | None = None,
+        text_color: Any = None,
+        background: Any = None,
+        legend: Any = None,
+        data_labels: bool | None = None,
+        gridlines: bool | None = None,
+        title: str | None = None,
+    ) -> dict[str, Any]:
+        """Dostraja wykres w arkuszu - odpowiednik ``ppt_format_chart``."""
+        worksheet = self.worksheet(sheet)
+        charts = worksheet.ChartObjects()
+        count = int(charts.Count)
+        if not count:
+            raise InvalidReferenceError(
+                f"Arkusz {to_python(worksheet.Name)} nie zawiera wykresow"
+            )
+
+        if isinstance(chart, str) and not str(chart).isdigit():
+            wanted = str(chart).strip().lower()
+            chart_object = None
+            for index in range(1, count + 1):
+                if str(charts(index).Name).strip().lower() == wanted:
+                    chart_object = charts(index)
+                    break
+            if chart_object is None:
+                raise InvalidReferenceError(f"Nie znaleziono wykresu '{chart}'")
+        else:
+            chart_object = charts(self.require_index(chart, count, "chart"))
+
+        applied = apply_chart_format(
+            chart_object.Chart,
+            series_colors=series_colors,
+            text_color=text_color,
+            background=background,
+            legend=legend,
+            data_labels=data_labels,
+            gridlines=gridlines,
+            title=title,
+        )
+
+        self._activate(worksheet)
+        return {
+            "sheet": to_python(worksheet.Name),
+            "chart": to_python(chart_object.Name),
+            "applied": applied,
+        }
 
     @action("set_cell_format")
     def set_cell_format(
@@ -816,6 +1238,37 @@ def _pivot_field(pivot: Any, field_name: Any) -> Any:
         raise InvalidReferenceError(
             f"Tabela przestawna nie ma pola '{field_name}' - sprawdz naglowki zakresu"
         ) from exc
+
+
+def _count_matches(target: Any, needle: str, look_at: int, match_case: bool) -> int:
+    """Liczy komorki pasujace do szukanego tekstu przed podmiana.
+
+    ``Range.Replace`` zwraca tylko ``True``/``False``, wiec liczbe trafien
+    trzeba policzyc osobno przez ``Find``/``FindNext``.
+    """
+    try:
+        found = target.Find(
+            What=needle, LookAt=look_at, MatchCase=bool(match_case), LookIn=-4163
+        )
+    except com_error:
+        return 0
+    if found is None:
+        return 0
+
+    first = com_address(found)
+    seen = {first}
+    while True:
+        try:
+            found = target.FindNext(found)
+        except com_error:
+            break
+        if found is None:
+            break
+        address = com_address(found)
+        if address in seen:
+            break
+        seen.add(address)
+    return len(seen)
 
 
 __all__ = ["ExcelController"]

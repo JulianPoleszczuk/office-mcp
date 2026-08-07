@@ -5,13 +5,14 @@ Serwer MCP, który pozwala Claude'owi sterować **otwartymi** aplikacjami Micros
 promptem, a zmiany widać na żywo w oknie aplikacji — bez pośredniego generowania plików i
 otwierania ich ręcznie.
 
-- 101 narzędzi MCP: `ppt_*` (53), `xl_*` (25), `doc_*` (23)
+- 121 narzędzi MCP: `ppt_*` (53), `xl_*` (36), `doc_*` (33)
 - pełny cykl: tworzenie, odczyt istniejących dokumentów, edycja, formatowanie, wykresy, obrazy, tabele,
   animacje i przejścia slajdów
-- eksport slajdu do PNG — model może obejrzeć własny slajd i poprawić układ zamiast pracować w ciemno
+- podgląd we wszystkich trzech aplikacjach: slajd i zakres Excela do PNG, każdy dokument do PDF —
+  model widzi, co zbudował, zamiast pracować w ciemno
 - styl jako jeden byt: paleta i czcionki motywu, tło na wzorcu — zamiast powtarzania hexów przy każdym kształcie
 - podłącza się do już uruchomionej instancji Office zamiast otwierać drugą
-- 307 testów jednostkowych i integracyjnych działających bez zainstalowanego Office
+- 347 testów jednostkowych i integracyjnych działających bez zainstalowanego Office
 
 ## Architektura
 
@@ -250,7 +251,22 @@ ppt_add_smartart(2, "bProcess3", ["Badania", "Skalowanie", "Produkt"], 60, 140, 
 Podwęzły powstają przez `AddNode` na rodzicu, nie przez `Demote()` — część układów (m.in.
 `hierarchy1`) odrzuca `Demote()` komunikatem „operacja nie jest obsługiwana przez bieżący obiekt".
 
-#### Pętla zwrotna
+#### Pętla zwrotna (wszystkie trzy aplikacje)
+
+Bez podglądu model wstawia elementy w ciemno i nie wie, że stopka nachodzi na panel albo że
+kolumna jest za wąska. Każda aplikacja ma teraz swój sposób pokazania wyniku:
+
+| Aplikacja | Podgląd | Dokument |
+|---|---|---|
+| PowerPoint | `ppt_export_slide` → PNG/JPG | `ppt_export_pdf` |
+| Excel | `xl_export_range_image` → PNG/JPG | `xl_export_pdf` (skoroszyt, arkusz albo zakres) |
+| Word | — | `doc_export_pdf` |
+
+Excel nie ma bezpośredniego eksportu zakresu do obrazu, więc `xl_export_range_image` kopiuje
+zakres jako bitmapę na tymczasowy obiekt wykresu (ten już potrafi `Export`) i usuwa go po
+zapisaniu pliku.
+
+#### Pętla zwrotna dla slajdów
 
 `ppt_export_slide` zapisuje slajd jako obraz, dzięki czemu model może **zobaczyć**, co
 zbudował, i poprawić układ — bez tego wstawia kształty w ciemno i nie wie, że stopka
@@ -310,6 +326,17 @@ Przejścia (`PP_TRANSITIONS`): `fade`, `fade_smoothly`, `dissolve`, `cut`, `push
 | `xl_add_chart(sheet, chart_type, data_range, left, top, width, height, title=None)` | Wykres |
 | `xl_create_table(sheet, range_ref, table_name, has_headers=True, style=...)` | Natywna tabela Excela |
 | `xl_add_pivot_table(sheet, source_range, dest_cell, rows, columns, values, ...)` | Tabela przestawna |
+| `xl_delete_columns(sheet, start_col, count=1)` | Usuwa kolumny (litera albo numer) |
+| `xl_set_row_height(sheet, row, height)` | Wysokość wiersza, `height="auto"` = autodopasowanie |
+| `xl_find_replace(old_text, new_text, sheet=None, ...)` | Podmiana tekstu, domyślnie we wszystkich arkuszach |
+| `xl_sort_range(sheet, range_ref, sort_by, order, has_headers)` | Sortowanie zakresu |
+| `xl_set_autofilter(sheet, range_ref=None, enable=True)` | Autofiltr |
+| `xl_copy_range(sheet, range_ref, target_cell, target_sheet=None, paste)` | Kopiowanie: `all`, `values`, `formats` |
+| `xl_add_data_validation(sheet, range_ref, validation_type, ...)` | Lista rozwijana i inne reguły poprawności |
+| `xl_get_cell_formula(sheet, range_ref)` | Formuły zakresu razem z wynikami |
+| `xl_export_pdf(path, sheet=None, range_ref=None)` | Skoroszyt, arkusz albo zakres do PDF-u |
+| `xl_export_range_image(sheet, range_ref, path)` | Zakres jako obraz — podgląd dla modelu |
+| `xl_format_chart(sheet, chart, ...)` | Kolory serii, osie, legenda, etykiety, tło wykresu |
 
 Reguły formatowania warunkowego: `cell_value` (operatory `greater`, `less`, `equal`,
 `not_equal`, `greater_equal`, `less_equal`, `between`, `not_between`), `expression`,
@@ -344,6 +371,16 @@ Funkcje agregujące tabeli przestawnej: `sum`, `count`, `average`, `max`, `min`,
 | `doc_insert_footer(text, section=1)` | Stopka |
 | `doc_add_page_numbers(alignment="center", first_page=True)` | Numery stron |
 | `doc_insert_table_of_contents(levels=3, position="start")` | Spis treści ze stylów nagłówków |
+| `doc_get_paragraph(paragraph_index, count=1)` | Odczyt akapitów ze stylem i wyrównaniem |
+| `doc_delete_paragraph(paragraph_index, count=1)` | Usuwa akapit albo kilka kolejnych |
+| `doc_insert_paragraph(text, paragraph_index=None, after=False, style=None)` | Akapit w konkretnym miejscu |
+| `doc_add_hyperlink(url, text=None, paragraph_index=None, tooltip=None)` | Hiperłącze |
+| `doc_add_footnote(paragraph_index, text)` | Przypis dolny |
+| `doc_insert_section_break(break_type, paragraph_index=None)` | Podział sekcji |
+| `doc_set_columns(count=1, section=1, spacing=None)` | Układ wielokolumnowy |
+| `doc_set_default_font(name=None, size=None)` | Czcionka stylu Normalny — podstawa dokumentu |
+| `doc_format_table(table_index, style, borders, header_bold, ...)` | Formatowanie wstawionej tabeli |
+| `doc_export_pdf(path, open_after=False)` | Dokument do PDF-u |
 
 Nazwy stylów można podawać po angielsku (`Heading 1`, `Normal`, `Quote`, `Caption`) także w
 polskiej wersji Worda — kontroler mapuje je na wbudowane stałe `wdStyle`.
@@ -387,7 +424,7 @@ Przykładowa odpowiedź błędu narzędzia MCP:
 python -m pytest -q
 ```
 
-307 testów, wszystkie bez zainstalowanego Office:
+347 testów, wszystkie bez zainstalowanego Office:
 
 - `tests/test_bridge_protocol.py` — kodowanie/dekodowanie protokołu oraz test integracyjny
   serwera TCP (prawdziwy socket, atrapa kontrolera),
@@ -426,6 +463,17 @@ Scenariusze do ręcznego testu na żywym Office: `examples/example_prompts.md`.
   `ExternalExporter` i każde wywołanie kończy się `TypeError: The Python instance can not be
   converted to a COM object`, niezależnie od wiązania. Skutek uboczny: nie da się wybrać
   jakości ekran/druk ani zakresu slajdów.
+- **Parametry `Range.Sort` w Excelu są „lepkie".** Excel pamięta `Orientation`, `MatchCase`
+  i `SortMethod` z poprzedniego sortowania w sesji. Pominięcie `Orientation` potrafi posortować
+  zakres lewo-prawo i poprzestawiać kolumny zamiast wierszy — `xl_sort_range` podaje
+  `xlSortColumns` jawnie przy każdym wywołaniu.
+- **Wbudowane style tabel Worda są zlokalizowane**, tak samo jak układy SmartArt. `doc_format_table`
+  przyjmuje nazwy niezależne od języka (`light_grid`, `medium_shading1`, `colorful_list`…)
+  i mapuje je na stałe `wdStyle`; przypisanie `"Table Grid"` po angielsku kończy się w polskim
+  Wordzie błędem „element o podanej nazwie nie istnieje".
+- **`ExportAsFixedFormat` działa w Excelu i Wordzie, ale nie w PowerPoincie.** W tych dwóch
+  aplikacjach pywin32 wywołuje ją normalnie, więc `xl_export_pdf` i `doc_export_pdf` używają jej
+  wprost; tylko PowerPoint wymaga obejścia przez `SaveCopyAs`.
 - **`SmartArtLayouts` potrafi zacząć zwracać „Odmowa dostępu".** Kolekcja układów bywa
   nieosiągalna po intensywnej pracy z SmartArtem w jednej sesji COM; pomaga dopiero restart
   PowerPointa. Sam kod nie ma na to wpływu — po ponownym uruchomieniu aplikacji te same

@@ -1272,6 +1272,204 @@ def xl_insert_columns(sheet: str, start_col: str | int, count: int = 1) -> dict[
 
 
 @server.tool()
+def xl_delete_columns(sheet: str, start_col: Any, count: int = 1) -> dict[str, Any]:
+    """Usuwa kolumny; 'start_col' przyjmuje litere ("C") albo numer (3)."""
+    return call_bridge(
+        "excel",
+        "delete_columns",
+        {"sheet": sheet, "start_col": start_col, "count": count},
+    )
+
+
+@server.tool()
+def xl_set_row_height(sheet: str, row: int, height: Any) -> dict[str, Any]:
+    """Wysokosc wiersza w punktach; height="auto" dopasowuje do tresci."""
+    return call_bridge(
+        "excel", "set_row_height", {"sheet": sheet, "row": row, "height": height}
+    )
+
+
+@server.tool()
+def xl_find_replace(
+    old_text: str,
+    new_text: str,
+    sheet: str | None = None,
+    range_ref: str | None = None,
+    match_case: bool = False,
+    whole_cell: bool = False,
+) -> dict[str, Any]:
+    """Podmienia tekst; bez 'sheet' przechodzi przez wszystkie arkusze.
+    'whole_cell=True' wymaga, zeby cala zawartosc komorki byla rowna szukanej."""
+    return call_bridge(
+        "excel",
+        "find_replace",
+        {
+            "old_text": old_text,
+            "new_text": new_text,
+            "sheet": sheet,
+            "range_ref": range_ref,
+            "match_case": match_case,
+            "whole_cell": whole_cell,
+        },
+    )
+
+
+@server.tool()
+def xl_sort_range(
+    sheet: str,
+    range_ref: str,
+    sort_by: Any,
+    order: str = "ascending",
+    has_headers: bool = True,
+) -> dict[str, Any]:
+    """Sortuje zakres po kolumnie 'sort_by' (litera, numer albo adres komorki).
+    'order' to ascending albo descending."""
+    return call_bridge(
+        "excel",
+        "sort_range",
+        {
+            "sheet": sheet,
+            "range_ref": range_ref,
+            "sort_by": sort_by,
+            "order": order,
+            "has_headers": has_headers,
+        },
+    )
+
+
+@server.tool()
+def xl_set_autofilter(
+    sheet: str, range_ref: str | None = None, enable: bool = True
+) -> dict[str, Any]:
+    """Wlacza albo wylacza autofiltr; bez 'range_ref' obejmuje uzyty obszar."""
+    return call_bridge(
+        "excel",
+        "set_autofilter",
+        {"sheet": sheet, "range_ref": range_ref, "enable": enable},
+    )
+
+
+@server.tool()
+def xl_copy_range(
+    sheet: str,
+    range_ref: str,
+    target_cell: str,
+    target_sheet: str | None = None,
+    paste: str = "all",
+) -> dict[str, Any]:
+    """Kopiuje zakres w to samo albo inne miejsce. 'paste' to all, values
+    (wkleja same wyniki, bez formul) albo formats."""
+    return call_bridge(
+        "excel",
+        "copy_range",
+        {
+            "sheet": sheet,
+            "range_ref": range_ref,
+            "target_cell": target_cell,
+            "target_sheet": target_sheet,
+            "paste": paste,
+        },
+    )
+
+
+@server.tool()
+def xl_add_data_validation(
+    sheet: str,
+    range_ref: str,
+    validation_type: str = "list",
+    values: Any = None,
+    formula: str | None = None,
+    formula2: str | None = None,
+    operator: str | None = None,
+    alert: str = "stop",
+    input_message: str | None = None,
+    error_message: str | None = None,
+) -> dict[str, Any]:
+    """Sprawdzanie poprawnosci danych. Dla listy rozwijanej wystarczy 'values'
+    (lista pozycji albo odwolanie do zakresu). Pozostale typy: whole_number,
+    decimal, date, time, text_length, custom - uzywaja 'formula' i 'operator'."""
+    return call_bridge(
+        "excel",
+        "add_data_validation",
+        {
+            "sheet": sheet,
+            "range_ref": range_ref,
+            "validation_type": validation_type,
+            "values": values,
+            "formula": formula,
+            "formula2": formula2,
+            "operator": operator,
+            "alert": alert,
+            "input_message": input_message,
+            "error_message": error_message,
+        },
+    )
+
+
+@server.tool()
+def xl_get_cell_formula(sheet: str, range_ref: str) -> dict[str, Any]:
+    """Zwraca formuly zakresu (a nie wyliczone wartosci) razem z wynikami."""
+    return call_bridge(
+        "excel", "get_cell_formula", {"sheet": sheet, "range_ref": range_ref}
+    )
+
+
+@server.tool()
+def xl_export_pdf(
+    path: str, sheet: str | None = None, range_ref: str | None = None
+) -> dict[str, Any]:
+    """Eksportuje skoroszyt, pojedynczy arkusz albo zakres do PDF-u."""
+    return call_bridge(
+        "excel",
+        "export_pdf",
+        {"path": path, "sheet": sheet, "range_ref": range_ref},
+    )
+
+
+@server.tool()
+def xl_export_range_image(sheet: str, range_ref: str, path: str) -> dict[str, Any]:
+    """Zapisuje zakres jako obraz (.png/.jpg/.gif). Sluzy do obejrzenia efektu
+    formatowania i poprawienia go - tak jak ppt_export_slide dla slajdow."""
+    return call_bridge(
+        "excel",
+        "export_range_image",
+        {"sheet": sheet, "range_ref": range_ref, "path": path},
+    )
+
+
+@server.tool()
+def xl_format_chart(
+    sheet: str,
+    chart: Any = 1,
+    series_colors: list[str] | None = None,
+    text_color: str | None = None,
+    background: str | None = None,
+    legend: Any = None,
+    data_labels: bool | None = None,
+    gridlines: bool | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Dostraja wykres w arkuszu: kolory serii, kolor tekstu osi i legendy,
+    tlo ('none' = przezroczyste), pozycja legendy, etykiety, siatka, tytul.
+    'chart' to numer albo nazwa obiektu wykresu w arkuszu."""
+    return call_bridge(
+        "excel",
+        "format_chart",
+        {
+            "sheet": sheet,
+            "chart": chart,
+            "series_colors": series_colors,
+            "text_color": text_color,
+            "background": background,
+            "legend": legend,
+            "data_labels": data_labels,
+            "gridlines": gridlines,
+            "title": title,
+        },
+    )
+
+
+@server.tool()
 def xl_set_cell_format(
     sheet: str,
     range_ref: str,
@@ -1442,6 +1640,148 @@ def xl_add_pivot_table(
             "values": values,
             "dest_sheet": dest_sheet,
             "table_name": table_name,
+        },
+    )
+
+
+@server.tool()
+def doc_export_pdf(path: str, open_after: bool = False) -> dict[str, Any]:
+    """Eksportuje dokument do PDF-u; nie zmienia pliku otwartego w Wordzie."""
+    return call_bridge(
+        "word", "export_pdf", {"path": path, "open_after": open_after}
+    )
+
+
+@server.tool()
+def doc_get_paragraph(paragraph_index: int, count: int = 1) -> dict[str, Any]:
+    """Czyta akapity wraz ze stylem, wyrownaniem i poziomem konspektu."""
+    return call_bridge(
+        "word",
+        "get_paragraph",
+        {"paragraph_index": paragraph_index, "count": count},
+    )
+
+
+@server.tool()
+def doc_delete_paragraph(paragraph_index: int, count: int = 1) -> dict[str, Any]:
+    """Usuwa akapit albo kilka kolejnych, liczac od podanego indeksu."""
+    return call_bridge(
+        "word",
+        "delete_paragraph",
+        {"paragraph_index": paragraph_index, "count": count},
+    )
+
+
+@server.tool()
+def doc_insert_paragraph(
+    text: str,
+    paragraph_index: int | None = None,
+    after: bool = False,
+    style: str | None = None,
+) -> dict[str, Any]:
+    """Wstawia akapit w konkretnym miejscu. Bez 'paragraph_index' dopisuje na
+    koncu; z indeksem wstawia przed wskazanym akapitem, a 'after=True' za nim."""
+    return call_bridge(
+        "word",
+        "insert_paragraph",
+        {
+            "text": text,
+            "paragraph_index": paragraph_index,
+            "after": after,
+            "style": style,
+        },
+    )
+
+
+@server.tool()
+def doc_add_hyperlink(
+    url: str,
+    text: str | None = None,
+    paragraph_index: int | None = None,
+    tooltip: str | None = None,
+) -> dict[str, Any]:
+    """Wstawia hiperlacze; bez 'paragraph_index' dopisuje je na koncu dokumentu."""
+    return call_bridge(
+        "word",
+        "add_hyperlink",
+        {
+            "url": url,
+            "text": text,
+            "paragraph_index": paragraph_index,
+            "tooltip": tooltip,
+        },
+    )
+
+
+@server.tool()
+def doc_add_footnote(paragraph_index: int, text: str) -> dict[str, Any]:
+    """Dodaje przypis dolny na koncu wskazanego akapitu."""
+    return call_bridge(
+        "word",
+        "add_footnote",
+        {"paragraph_index": paragraph_index, "text": text},
+    )
+
+
+@server.tool()
+def doc_insert_section_break(
+    break_type: str = "next_page", paragraph_index: int | None = None
+) -> dict[str, Any]:
+    """Podzial sekcji: next_page, continuous, even_page, odd_page. Sekcje maja
+    wlasne marginesy, kolumny, naglowki i stopki."""
+    return call_bridge(
+        "word",
+        "insert_section_break",
+        {"break_type": break_type, "paragraph_index": paragraph_index},
+    )
+
+
+@server.tool()
+def doc_set_columns(
+    count: int = 1, section: int = 1, spacing: float | None = None
+) -> dict[str, Any]:
+    """Ustawia liczbe kolumn tekstu w sekcji (uklad gazetowy); 'spacing' w punktach."""
+    return call_bridge(
+        "word",
+        "set_columns",
+        {"count": count, "section": section, "spacing": spacing},
+    )
+
+
+@server.tool()
+def doc_set_default_font(
+    name: str | None = None, size: float | None = None
+) -> dict[str, Any]:
+    """Zmienia czcionke stylu Normalny - podstawe calego dokumentu, zamiast
+    ustawiania czcionki akapit po akapicie."""
+    return call_bridge("word", "set_default_font", {"name": name, "size": size})
+
+
+@server.tool()
+def doc_format_table(
+    table_index: int = 1,
+    style: str | None = None,
+    borders: bool | None = None,
+    header_bold: bool | None = None,
+    header_fill: str | None = None,
+    column_widths: list[float] | None = None,
+    autofit: bool | None = None,
+) -> dict[str, Any]:
+    """Formatuje wstawiona tabele. 'style' przyjmuje nazwy niezalezne od jezyka:
+    normal, light_shading, light_list, light_grid, medium_shading1,
+    medium_grid1..3, dark_list, colorful_shading, colorful_list, colorful_grid
+    (oraz warianty _accent1). Szerokosci kolumn w punktach."""
+    return call_bridge(
+        "word",
+        "format_table",
+        {
+            "table_index": table_index,
+            "style": style,
+            "borders": borders,
+            "header_bold": header_bold,
+            "header_fill": header_fill,
+            "column_widths": column_widths,
+            "autofit": autofit,
         },
     )
 

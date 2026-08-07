@@ -549,5 +549,176 @@ class TestErrorMapping:
             "insert_footer",
             "add_page_numbers",
             "insert_table_of_contents",
+            "export_pdf",
+            "get_paragraph",
+            "delete_paragraph",
+            "insert_paragraph",
+            "add_hyperlink",
+            "add_footnote",
+            "insert_section_break",
+            "set_columns",
+            "set_default_font",
+            "format_table",
         ):
             assert name in actions
+
+
+class TestParagraphEditing:
+    def test_delete_paragraph_returns_removed_text(self, word):
+        controller, _app, document = word
+        document.Paragraphs = com_collection(
+            [make_paragraph("Pierwszy\r"), make_paragraph("Drugi\r")]
+        )
+
+        result = controller.dispatch("delete_paragraph", {"paragraph_index": 1})
+
+        assert result["deleted"] == 1
+        assert result["texts"] == ["Pierwszy"]
+
+    def test_delete_paragraph_out_of_range(self, word):
+        controller, *_ = word
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch("delete_paragraph", {"paragraph_index": 99})
+
+    def test_insert_paragraph_before_given_index(self, word):
+        controller, _app, document = word
+        first = make_paragraph("Pierwszy\r")
+        document.Paragraphs = com_collection([first, make_paragraph("Drugi\r")])
+
+        result = controller.dispatch(
+            "insert_paragraph", {"text": "Nowy", "paragraph_index": 1}
+        )
+
+        first.Range.InsertParagraphBefore.assert_called_once()
+        assert result["paragraph_index"] == 1
+
+    def test_insert_paragraph_after_given_index(self, word):
+        controller, _app, document = word
+        first = make_paragraph("Pierwszy\r")
+        document.Paragraphs = com_collection([first, make_paragraph("Drugi\r")])
+
+        result = controller.dispatch(
+            "insert_paragraph",
+            {"text": "Nowy", "paragraph_index": 1, "after": True},
+        )
+
+        first.Range.InsertParagraphAfter.assert_called_once()
+        assert result["paragraph_index"] == 2
+
+    def test_get_paragraph_reads_style_and_text(self, word):
+        controller, _app, document = word
+        document.Paragraphs = com_collection(
+            [make_paragraph("Tytul\r\x07", style="Nagłówek 1", outline_level=1)]
+        )
+
+        result = controller.dispatch("get_paragraph", {"paragraph_index": 1})
+
+        assert result["paragraphs"][0]["text"] == "Tytul"
+        assert result["paragraphs"][0]["style"] == "Nagłówek 1"
+        assert result["paragraphs"][0]["outline_level"] == 1
+
+    def test_get_paragraph_clamps_count_to_document(self, word):
+        controller, _app, document = word
+        document.Paragraphs = com_collection(
+            [make_paragraph("A\r"), make_paragraph("B\r")]
+        )
+
+        result = controller.dispatch(
+            "get_paragraph", {"paragraph_index": 2, "count": 10}
+        )
+
+        assert result["returned"] == 1
+
+
+class TestWordExtras:
+    def test_export_pdf_uses_fixed_format(self, word, tmp_path):
+        controller, _app, document = word
+        target = tmp_path / "raport.pdf"
+
+        result = controller.dispatch("export_pdf", {"path": str(target)})
+
+        document.ExportAsFixedFormat.assert_called_once_with(str(target), 17, False)
+        document.SaveAs.assert_not_called()
+        assert result["pages"] == 3
+
+    def test_hyperlink_defaults_text_to_url(self, word):
+        controller, _app, document = word
+
+        controller.dispatch("add_hyperlink", {"url": "https://openai.com"})
+
+        assert (
+            document.Hyperlinks.Add.call_args.kwargs["TextToDisplay"]
+            == "https://openai.com"
+        )
+
+    def test_hyperlink_requires_url(self, word):
+        controller, *_ = word
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch("add_hyperlink", {"url": ""})
+
+    def test_section_break_maps_name(self, word):
+        controller, _app, document = word
+
+        controller.dispatch("insert_section_break", {"break_type": "continuous"})
+
+        assert document.Content.InsertBreak.call_args[0][0] == 3
+
+    def test_unknown_section_break_is_rejected(self, word):
+        controller, *_ = word
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch("insert_section_break", {"break_type": "nowa_kartka"})
+
+    def test_set_default_font_writes_normal_style(self, word):
+        controller, _app, document = word
+
+        controller.dispatch("set_default_font", {"name": "Segoe UI", "size": 11})
+
+        assert document.Styles.call_args[0][0] == -1  # wdStyleNormal
+        assert document.Styles.return_value.Font.Name == "Segoe UI"
+
+    def test_set_default_font_without_arguments_is_rejected(self, word):
+        controller, *_ = word
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch("set_default_font", {})
+
+    def test_table_style_uses_locale_independent_constant(self, word):
+        controller, _app, document = word
+        table = MagicMock()
+        document.Tables = com_collection([table])
+
+        controller.dispatch("format_table", {"table_index": 1, "style": "light_grid"})
+
+        # Nazwy wbudowanych stylow tabel Word tlumaczy - idzie stala, nie tekst
+        assert table.Style == -161
+
+    def test_format_table_without_tables_is_rejected(self, word):
+        controller, _app, document = word
+        document.Tables = com_collection([])
+
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch("format_table", {"table_index": 1, "borders": True})
+
+    def test_format_table_column_widths_stop_at_column_count(self, word):
+        controller, _app, document = word
+        table = MagicMock()
+        table.Columns.Count = 2
+        document.Tables = com_collection([table])
+
+        result = controller.dispatch(
+            "format_table", {"table_index": 1, "column_widths": [100, 120, 140]}
+        )
+
+        assert result["applied"]["column_widths"] == 3
+        assert table.Columns.call_count == 2
+
+    def test_set_columns_updates_section(self, word):
+        controller, _app, document = word
+        section = MagicMock()
+        section.PageSetup.TextColumns.Count = 2
+        section.PageSetup.TextColumns.Spacing = 24.0
+        document.Sections = com_collection([section])
+
+        result = controller.dispatch("set_columns", {"count": 2, "spacing": 24})
+
+        section.PageSetup.TextColumns.SetCount.assert_called_once_with(2)
+        assert result["columns"] == 2
