@@ -1653,6 +1653,136 @@ def xl_add_pivot_table(
 
 
 @server.tool()
+def doc_set_paragraph_format(
+    paragraph_index: int | None = None,
+    count: int = 1,
+    style: str | None = None,
+    body_text_only: bool = False,
+    line_spacing: float | None = None,
+    space_before: float | None = None,
+    space_after: float | None = None,
+    first_line_indent: float | None = None,
+    left_indent: float | None = None,
+    right_indent: float | None = None,
+    alignment: str | None = None,
+    keep_with_next: bool | None = None,
+    page_break_before: bool | None = None,
+    widow_control: bool | None = None,
+    unit: str = "pt",
+) -> dict[str, Any]:
+    """Interlinia, wciecia i lamanie akapitow - podstawa skladu pracy dyplomowej.
+    Zasieg: 'style' zmienia definicje stylu (np. "Normal" = cala tresc naraz),
+    'paragraph_index' z 'count' obejmuje konkretne akapity, a brak obu -
+    wszystkie akapity albo, przy 'body_text_only', tylko tekst bez naglowkow.
+    'line_spacing' 1.0 / 1.5 / 2.0 albo dowolna wielokrotnosc. Odstepy i wciecia
+    w jednostce 'unit' (pt, cm, mm, in)."""
+    return call_bridge(
+        "word",
+        "set_paragraph_format",
+        {
+            "paragraph_index": paragraph_index,
+            "count": count,
+            "style": style,
+            "body_text_only": body_text_only,
+            "line_spacing": line_spacing,
+            "space_before": space_before,
+            "space_after": space_after,
+            "first_line_indent": first_line_indent,
+            "left_indent": left_indent,
+            "right_indent": right_indent,
+            "alignment": alignment,
+            "keep_with_next": keep_with_next,
+            "page_break_before": page_break_before,
+            "widow_control": widow_control,
+            "unit": unit,
+        },
+    )
+
+
+@server.tool()
+def doc_set_heading_numbering(
+    enable: bool = True, levels: int = 3, indent: float = 0.0
+) -> dict[str, Any]:
+    """Wlacza numeracje rozdzialow 1., 1.1, 1.1.1 powiazana ze stylami naglowkow.
+    Numerowane sa wylacznie akapity naglowkowe; tekst zwykly zostaje bez zmian.
+    'enable=False' zdejmuje numeracje."""
+    return call_bridge(
+        "word",
+        "set_heading_numbering",
+        {"enable": enable, "levels": levels, "indent": indent},
+    )
+
+
+@server.tool()
+def doc_add_caption(
+    paragraph_index: int,
+    text: str,
+    label: str = "figure",
+    above: bool = False,
+) -> dict[str, Any]:
+    """Numerowany podpis przy akapicie. 'label' to etykieta wbudowana ('figure',
+    'table', 'equation') albo dowolny wlasny tekst - wlasna etykieta trafia do
+    dokumentu doslownie, wiec praca po polsku uzywa label="Rysunek" albo
+    label="Tabela". Numeracja jest polem Worda, wiec kolejne podpisy
+    przenumerowuja wczesniejsze - po zmianach wywolaj doc_update_fields."""
+    return call_bridge(
+        "word",
+        "add_caption",
+        {
+            "paragraph_index": paragraph_index,
+            "text": text,
+            "label": label,
+            "above": above,
+        },
+    )
+
+
+@server.tool()
+def doc_insert_table_of_figures(
+    label: str = "figure", position: Any = "end"
+) -> dict[str, Any]:
+    """Spis rysunkow albo tabel zbudowany z podpisow. 'position': start, end albo
+    numer akapitu, po ktorym spis ma trafic."""
+    return call_bridge(
+        "word",
+        "insert_table_of_figures",
+        {"label": label, "position": position},
+    )
+
+
+@server.tool()
+def doc_update_fields() -> dict[str, Any]:
+    """Odswieza pola: spis tresci, spisy rysunkow i numeracje podpisow. Spis tresci
+    wstawiony przed napisaniem rozdzialow jest pusty do czasu odswiezenia."""
+    return call_bridge("word", "update_fields", {})
+
+
+@server.tool()
+def doc_set_page_setup(
+    orientation: str | None = None,
+    gutter: float | None = None,
+    mirror_margins: bool | None = None,
+    different_first_page: bool | None = None,
+    section: int | None = None,
+    unit: str = "cm",
+) -> dict[str, Any]:
+    """Orientacja strony (portrait/landscape), margines na oprawe ('gutter')
+    i marginesy lustrzane - ustawienia druku dwustronnego pracy dyplomowej."""
+    return call_bridge(
+        "word",
+        "set_page_setup",
+        {
+            "orientation": orientation,
+            "gutter": gutter,
+            "mirror_margins": mirror_margins,
+            "different_first_page": different_first_page,
+            "section": section,
+            "unit": unit,
+        },
+    )
+
+
+@server.tool()
 def doc_export_pdf(path: str, open_after: bool = False) -> dict[str, Any]:
     """Eksportuje dokument do PDF-u; nie zmienia pliku otwartego w Wordzie."""
     return call_bridge(
@@ -2010,10 +2140,11 @@ def doc_add_page_numbers(
 
 
 @server.tool()
-def doc_insert_table_of_contents(levels: int = 3, position: str = "start") -> dict[str, Any]:
+def doc_insert_table_of_contents(levels: int = 3, position: Any = "start") -> dict[str, Any]:
     """Wstawia spis tresci zbudowany ze stylow naglowkow.
 
-    'position': "start" (poczatek dokumentu) albo "end".
+    'position': "start", "end" albo numer akapitu, po ktorym spis ma trafic -
+    ten ostatni pozwala umiescic spis za strona tytulowa pracy dyplomowej.
     """
     return call_bridge(
         "word",

@@ -125,6 +125,22 @@ class WordController(BaseController):
         target.SetRange(max(int(target.Start), end - 1), max(int(target.Start), end - 1))
         return target
 
+    def _insert_point(self, document: Any, position: Any) -> Any:
+        """Miejsce wstawienia spisu: ``start``, ``end`` albo numer akapitu.
+
+        Praca dyplomowa potrzebuje spisu tresci *za* strona tytulowa, a nie na
+        samym poczatku pliku - stad mozliwosc wskazania konkretnego akapitu.
+        """
+        if isinstance(position, int) or str(position).strip().isdigit():
+            index = self.require_index(
+                position, int(document.Paragraphs.Count), "position"
+            )
+            return self._inside_paragraph_end(document.Paragraphs(index))
+
+        if str(position).strip().lower() in ("start", "poczatek"):
+            return document.Range(0, 0)
+        return self._end_range(document)
+
     def _end_range(self, document: Any) -> Any:
         """Zakres ustawiony na sam koniec dokumentu."""
         target = document.Content
@@ -628,6 +644,377 @@ class WordController(BaseController):
             "height": round(float(shape.Height), 2),
         }
 
+    def _apply_paragraph_format(
+        self,
+        target: Any,
+        line_spacing: float | None,
+        space_before: float | None,
+        space_after: float | None,
+        first_line_indent: float | None,
+        left_indent: float | None,
+        right_indent: float | None,
+        alignment: str | None,
+        keep_with_next: bool | None,
+        page_break_before: bool | None,
+        widow_control: bool | None,
+        unit: str,
+    ) -> dict[str, Any]:
+        """Ustawia pola ``ParagraphFormat`` na akapicie albo na stylu."""
+        applied: dict[str, Any] = {}
+
+        if line_spacing is not None:
+            value = float(line_spacing)
+            rule = WD_LINE_SPACING_RULES.get(value)
+            if rule is None:
+                # Poza 1.0 / 1.5 / 2.0 Word oczekuje reguly "wielokrotnosc"
+                # i interlinii podanej w punktach, gdzie jeden wiersz = 12 pt.
+                target.LineSpacingRule = WD_LINE_SPACE_MULTIPLE
+                target.LineSpacing = value * POINTS_PER_LINE
+            else:
+                target.LineSpacingRule = rule
+            applied["line_spacing"] = value
+
+        for name, value, attribute in (
+            ("space_before", space_before, "SpaceBefore"),
+            ("space_after", space_after, "SpaceAfter"),
+            ("first_line_indent", first_line_indent, "FirstLineIndent"),
+            ("left_indent", left_indent, "LeftIndent"),
+            ("right_indent", right_indent, "RightIndent"),
+        ):
+            if value is not None:
+                setattr(target, attribute, points(value, unit))
+                applied[name] = points(value, unit)
+
+        if alignment is not None:
+            target.Alignment = lookup_constant(alignment, WD_ALIGNMENTS, "alignment")
+            applied["alignment"] = alignment
+
+        for name, value, attribute in (
+            ("keep_with_next", keep_with_next, "KeepWithNext"),
+            ("page_break_before", page_break_before, "PageBreakBefore"),
+            ("widow_control", widow_control, "WidowControl"),
+        ):
+            if value is not None:
+                setattr(target, attribute, bool(value))
+                applied[name] = bool(value)
+
+        return applied
+
+    @action("set_paragraph_format")
+    def set_paragraph_format(
+        self,
+        paragraph_index: int | None = None,
+        count: int = 1,
+        style: str | None = None,
+        body_text_only: bool = False,
+        line_spacing: float | None = None,
+        space_before: float | None = None,
+        space_after: float | None = None,
+        first_line_indent: float | None = None,
+        left_indent: float | None = None,
+        right_indent: float | None = None,
+        alignment: str | None = None,
+        keep_with_next: bool | None = None,
+        page_break_before: bool | None = None,
+        widow_control: bool | None = None,
+        unit: str = "pt",
+    ) -> dict[str, Any]:
+        """Interlinia, wciecia i lamanie akapitow - podstawa skladu pracy dyplomowej.
+
+        Zasieg wybiera sie jednym z trzech sposobow: ``style`` zmienia definicje
+        stylu (np. cala tresc naraz przez ``"Normal"``), ``paragraph_index``
+        z ``count`` obejmuje konkretne akapity, a brak obu - wszystkie akapity
+        dokumentu albo, przy ``body_text_only=True``, tylko tekst zwykly
+        z pominieciem naglowkow.
+        """
+        if all(
+            value is None
+            for value in (
+                line_spacing, space_before, space_after, first_line_indent,
+                left_indent, right_indent, alignment, keep_with_next,
+                page_break_before, widow_control,
+            )
+        ):
+            raise InvalidReferenceError("Nie podano zadnego pola do zmiany")
+
+        document = self.document()
+
+        if style is not None:
+            resolved = self._resolve_style(document, style)
+            applied = self._apply_paragraph_format(
+                resolved.ParagraphFormat, line_spacing, space_before, space_after,
+                first_line_indent, left_indent, right_indent, alignment,
+                keep_with_next, page_break_before, widow_control, unit,
+            )
+            return {
+                "scope": "style",
+                "style": to_python(resolved.NameLocal),
+                "applied": applied,
+            }
+
+        total = int(document.Paragraphs.Count)
+        if paragraph_index is not None:
+            first = self.require_index(paragraph_index, total, "paragraph_index")
+            indexes = list(range(first, min(total, first + max(1, int(count)) - 1) + 1))
+        else:
+            indexes = list(range(1, total + 1))
+
+        touched = 0
+        applied: dict[str, Any] = {}
+        for index in indexes:
+            paragraph = document.Paragraphs(index)
+            if body_text_only and int(paragraph.OutlineLevel) != WD_OUTLINE_BODY_TEXT:
+                continue
+            applied = self._apply_paragraph_format(
+                paragraph, line_spacing, space_before, space_after,
+                first_line_indent, left_indent, right_indent, alignment,
+                keep_with_next, page_break_before, widow_control, unit,
+            )
+            touched += 1
+
+        return {
+            "scope": "paragraphs",
+            "paragraphs": touched,
+            "body_text_only": bool(body_text_only),
+            "applied": applied,
+        }
+
+    def _resolve_style(self, document: Any, style: Any) -> Any:
+        """Obiekt stylu po nazwie lokalnej, angielskiej albo stalej wbudowanej."""
+        if isinstance(style, int):
+            return document.Styles(style)
+
+        wanted = str(style).strip()
+        try:
+            return document.Styles(wanted)
+        except com_error:
+            pass
+
+        builtin = WD_BUILTIN_STYLES.get(wanted.lower())
+        if builtin is None:
+            raise InvalidReferenceError(
+                f"Nieznany styl '{style}'. Uzyj nazwy z Worda albo jednej z: "
+                f"{', '.join(sorted(WD_BUILTIN_STYLES))}"
+            )
+        return document.Styles(builtin)
+
+    @action("set_heading_numbering")
+    def set_heading_numbering(
+        self, enable: bool = True, levels: int = 3, indent: float = 0.0
+    ) -> dict[str, Any]:
+        """Wlacza numeracje rozdzialow 1., 1.1, 1.1.1 powiazana ze stylami naglowkow.
+
+        Schemat budowany jest recznie, poziom po poziomie, zamiast brania gotowca
+        z galerii - szablony galerii roznia sie miedzy instalacjami i potrafia
+        dac numeracje prawnicza ("Artykul I.", "Sekcja 2.01").
+
+        Numerowane sa wylacznie akapity o stylu naglowkowym; tekst zwykly
+        pozostaje nietkniety.
+        """
+        document = self.document()
+        depth = max(1, min(int(levels), 9))
+
+        if not enable:
+            removed = 0
+            for index in range(1, int(document.Paragraphs.Count) + 1):
+                paragraph = document.Paragraphs(index)
+                if 1 <= int(paragraph.OutlineLevel) <= 9:
+                    paragraph.Range.ListFormat.RemoveNumbers()
+                    removed += 1
+            return {"enabled": False, "headings": removed}
+
+        template = self.app.ListGalleries(WD_OUTLINE_NUMBER_GALLERY).ListTemplates(5)
+        for level in range(1, depth + 1):
+            list_level = template.ListLevels(level)
+            list_level.NumberStyle = WD_LIST_NUMBER_ARABIC
+            # "%1." dla rozdzialu, "%1.%2" dla podrozdzialu i tak dalej.
+            list_level.NumberFormat = ".".join(
+                f"%{position}" for position in range(1, level + 1)
+            ) + ("." if level == 1 else "")
+            list_level.TrailingCharacter = WD_TRAILING_TAB
+            list_level.StartAt = 1
+            list_level.NumberPosition = points(indent, "pt")
+            list_level.TextPosition = points(indent, "pt") + points(level * 10, "pt")
+            list_level.TabPosition = points(indent, "pt") + points(level * 10, "pt")
+            list_level.LinkedStyle = to_python(
+                document.Styles(WD_BUILTIN_STYLES[f"heading {level}"]).NameLocal
+            )
+
+        numbered = 0
+        for index in range(1, int(document.Paragraphs.Count) + 1):
+            paragraph = document.Paragraphs(index)
+            level = int(paragraph.OutlineLevel)
+            if 1 <= level <= depth:
+                paragraph.Range.ListFormat.ApplyListTemplateWithLevel(
+                    ListTemplate=template,
+                    ContinuePreviousList=True,
+                    ApplyTo=WD_LIST_APPLY_TO_WHOLE,
+                    DefaultListBehavior=WD_LIST_BEHAVIOR_MULTILEVEL,
+                    ApplyLevel=level,
+                )
+                numbered += 1
+
+        return {"enabled": True, "levels": depth, "headings": numbered}
+
+    @action("add_caption")
+    def add_caption(
+        self,
+        paragraph_index: int,
+        text: str,
+        label: str = "figure",
+        above: bool = False,
+    ) -> dict[str, Any]:
+        """Dodaje numerowany podpis przy wskazanym akapicie.
+
+        ``label`` przyjmuje etykiete wbudowana (``figure``, ``table``,
+        ``equation``) albo dowolny wlasny tekst, np. ``"Rysunek"`` - wlasna
+        etykieta jest w razie potrzeby dopisywana do slownika Worda.
+
+        Numeracja jest polem Worda, wiec przy wstawianiu kolejnych podpisow
+        wczesniejsze same sie przenumeruja - po zmianach warto wywolac
+        ``doc_update_fields``.
+        """
+        document = self.document()
+        total = int(document.Paragraphs.Count)
+        index = self.require_index(paragraph_index, total, "paragraph_index")
+
+        # Etykieta wbudowana ("figure") idzie jako stala - Word sam dobiera
+        # jej brzmienie, ktore zalezy od jezyka dokumentu i potrafi byc raz
+        # "Rysunek", raz "Figure". Kazdy inny tekst traktujemy jak etykiete
+        # wlasna i w razie potrzeby dopisujemy ja do slownika Worda, dzieki
+        # czemu praca po polsku dostaje "Rysunek" niezaleznie od ustawien.
+        key = str(label).strip().lower()
+        if key in WD_CAPTION_LABELS:
+            label_name: Any = WD_CAPTION_LABELS[key]
+        else:
+            label_name = str(label).strip()
+            existing = {
+                str(self.app.CaptionLabels(position).Name)
+                for position in range(1, int(self.app.CaptionLabels.Count) + 1)
+            }
+            if label_name not in existing:
+                self.app.CaptionLabels.Add(label_name)
+        title = str(text)
+        if title and not title.startswith((":", ".", " ")):
+            title = f": {title}"
+
+        document.Paragraphs(index).Range.InsertCaption(
+            Label=label_name,
+            Title=title,
+            Position=0 if above else 1,
+            ExcludeLabel=0,
+        )
+
+        return {
+            "paragraph_index": index,
+            "label": label,
+            "label_name": to_python(label_name),
+            "text": str(text),
+            "above": bool(above),
+            "paragraph_count": int(document.Paragraphs.Count),
+        }
+
+    @action("insert_table_of_figures")
+    def insert_table_of_figures(
+        self, label: str = "figure", position: Any = "end"
+    ) -> dict[str, Any]:
+        """Wstawia spis rysunkow albo tabel zbudowany z podpisow.
+
+        ``position`` jak w spisie tresci: ``start``, ``end`` albo numer akapitu.
+        """
+        document = self.document()
+        # Spis buduje sie po nazwie etykiety, wiec dla wbudowanej trzeba ja
+        # najpierw odczytac z Worda, a wlasna ("Rysunek") bierzemy doslownie -
+        # tak samo jak w add_caption, zeby oba narzedzia widzialy te sama liste.
+        key = str(label).strip().lower()
+        if key in WD_CAPTION_LABELS:
+            caption_name = to_python(self.app.CaptionLabels(WD_CAPTION_LABELS[key]).Name)
+        else:
+            caption_name = str(label).strip()
+        target = self._insert_point(document, position)
+
+        table = document.TablesOfFigures.Add(Range=target, Caption=caption_name)
+
+        return {
+            "label": label,
+            "caption_label": caption_name,
+            "position": position,
+            "entries": len(str(table.Range.Text).strip().splitlines()),
+        }
+
+    @action("update_fields")
+    def update_fields(self) -> dict[str, Any]:
+        """Odswieza pola: spis tresci, spisy rysunkow, numeracje podpisow.
+
+        Spis tresci wstawiony przed napisaniem rozdzialow jest pusty do czasu
+        odswiezenia - bez tego kroku dokument wyglada na uszkodzony.
+        """
+        document = self.document()
+        document.Fields.Update()
+
+        for collection in (document.TablesOfContents, document.TablesOfFigures):
+            for index in range(1, int(collection.Count) + 1):
+                try:
+                    collection(index).Update()
+                except com_error:
+                    pass
+
+        return {
+            "fields": int(document.Fields.Count),
+            "tables_of_contents": int(document.TablesOfContents.Count),
+            "tables_of_figures": int(document.TablesOfFigures.Count),
+        }
+
+    @action("set_page_setup")
+    def set_page_setup(
+        self,
+        orientation: str | None = None,
+        gutter: float | None = None,
+        mirror_margins: bool | None = None,
+        different_first_page: bool | None = None,
+        section: int | None = None,
+        unit: str = "cm",
+    ) -> dict[str, Any]:
+        """Orientacja, margines na oprawe i marginesy lustrzane - druk dwustronny.
+
+        ``gutter`` to dodatkowy zapas przy krawedzi zszycia, a
+        ``mirror_margins`` przenosi go na przemian raz w lewo, raz w prawo,
+        tak jak w oprawionej pracy dyplomowej.
+        """
+        if all(
+            value is None
+            for value in (orientation, gutter, mirror_margins, different_first_page)
+        ):
+            raise InvalidReferenceError("Nie podano zadnego pola do zmiany")
+
+        document = self.document()
+        if section is None:
+            setups = [document.PageSetup]
+            scope = "document"
+        else:
+            index = self.require_index(section, int(document.Sections.Count), "section")
+            setups = [document.Sections(index).PageSetup]
+            scope = f"section {index}"
+
+        applied: dict[str, Any] = {}
+        for setup in setups:
+            if orientation is not None:
+                setup.Orientation = lookup_constant(
+                    orientation, WD_ORIENTATIONS, "orientation"
+                )
+                applied["orientation"] = orientation
+            if gutter is not None:
+                setup.Gutter = points(gutter, unit)
+                applied["gutter"] = round(points(gutter, unit), 2)
+            if mirror_margins is not None:
+                setup.MirrorMargins = bool(mirror_margins)
+                applied["mirror_margins"] = bool(mirror_margins)
+            if different_first_page is not None:
+                setup.DifferentFirstPageHeaderFooter = bool(different_first_page)
+                applied["different_first_page"] = bool(different_first_page)
+
+        return {"scope": scope, "applied": applied}
+
     @action("export_pdf")
     def export_pdf(self, path: str, open_after: bool = False) -> dict[str, Any]:
         """Eksportuje dokument do PDF-u bez zmiany biezacego pliku.
@@ -1013,16 +1400,17 @@ class WordController(BaseController):
 
     @action("insert_table_of_contents")
     def insert_table_of_contents(
-        self, levels: int = 3, position: str = "start"
+        self, levels: int = 3, position: Any = "start"
     ) -> dict[str, Any]:
-        """Wstawia spis tresci zbudowany ze stylow naglowkow."""
+        """Wstawia spis tresci zbudowany ze stylow naglowkow.
+
+        ``position`` przyjmuje ``start``, ``end`` albo numer akapitu - ten
+        ostatni pozwala umiescic spis za strona tytulowa.
+        """
         depth = max(1, min(int(levels), 9))
         document = self.document()
 
-        if str(position).strip().lower() in ("start", "poczatek"):
-            target = document.Range(0, 0)
-        else:
-            target = self._end_range(document)
+        target = self._insert_point(document, position)
 
         try:
             toc = document.TablesOfContents.Add(
