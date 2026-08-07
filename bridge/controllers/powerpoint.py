@@ -13,12 +13,17 @@ from typing import Any
 from bridge.controllers.base import BaseController, action
 from bridge.utils.com_helpers import (
     CHART_TYPES,
+    MSO_ANIM_EFFECTS,
+    MSO_ANIM_LEVELS,
+    MSO_ANIM_TRIGGERS,
     PP_LAYOUTS,
     PP_SAVE_FORMATS,
+    PP_TRANSITIONS,
     SHAPE_TYPES,
     bgr_to_hex,
     com_address,
     com_error,
+    constant_name,
     lookup_constant,
     normalize_path,
     parse_color,
@@ -919,8 +924,14 @@ class PowerPointController(BaseController):
         height: float,
         fill_color: Any = None,
         text: str | None = None,
+        line_color: Any = None,
+        line_width: float | None = None,
     ) -> dict[str, Any]:
-        """Wstawia ksztalt (prostokat, strzalka, gwiazda...) z opcjonalnym tekstem."""
+        """Wstawia ksztalt (prostokat, strzalka, gwiazda...) z opcjonalnym tekstem.
+
+        ``line_color="none"`` usuwa obrys - bez tego ksztalt dostaje domyslna
+        ramke z motywu, ktora rzadko pasuje do wlasnej kolorystyki.
+        """
         slide = self.slide(slide_index)
         shape_constant = lookup_constant(shape_type, SHAPE_TYPES, "shape_type")
         shape = slide.Shapes.AddShape(
@@ -928,8 +939,20 @@ class PowerPointController(BaseController):
         )
 
         if fill_color is not None:
-            shape.Fill.Solid()
-            shape.Fill.ForeColor.RGB = parse_color(fill_color)
+            if str(fill_color).strip().lower() == "none":
+                shape.Fill.Visible = MSO_FALSE
+            else:
+                shape.Fill.Solid()
+                shape.Fill.ForeColor.RGB = parse_color(fill_color)
+        if line_color is not None:
+            if str(line_color).strip().lower() == "none":
+                shape.Line.Visible = MSO_FALSE
+            else:
+                shape.Line.Visible = MSO_TRUE
+                shape.Line.ForeColor.RGB = parse_color(line_color)
+        if line_width is not None:
+            shape.Line.Visible = MSO_TRUE
+            shape.Line.Weight = float(line_width)
         if text:
             shape.TextFrame.TextRange.Text = text
 
@@ -938,6 +961,194 @@ class PowerPointController(BaseController):
             "slide_index": int(slide_index),
             "shape_id": int(shape.Id),
             "shape_type": shape_type,
+        }
+
+
+    def _resolve_shape(self, slide: Any, shape_id: Any) -> Any:
+        """Ksztalt po id/nazwie, ale rozumie tez ``title`` i ``content``."""
+        if isinstance(shape_id, str):
+            wanted = shape_id.strip().lower()
+            if wanted in ("title", "tytul"):
+                shape = self._title_shape(slide)
+                if shape is None:
+                    raise InvalidReferenceError("Slajd nie ma placeholdera tytulu")
+                return shape
+            if wanted in ("content", "body", "tresc"):
+                for index in range(1, slide.Shapes.Placeholders.Count + 1):
+                    shape = slide.Shapes.Placeholders(index)
+                    try:
+                        placeholder_type = int(shape.PlaceholderFormat.Type)
+                    except com_error:
+                        continue
+                    if placeholder_type in CONTENT_PLACEHOLDERS:
+                        return shape
+                raise InvalidReferenceError("Slajd nie ma placeholdera tresci")
+        return self._find_shape(slide, shape_id)
+
+    @action("add_animation")
+    def add_animation(
+        self,
+        slide_index: int,
+        shape_id: Any,
+        effect: str = "fade",
+        trigger: str = "after_previous",
+        level: str = "shape",
+        duration: float | None = None,
+        delay: float | None = None,
+        exit_effect: bool = False,
+    ) -> dict[str, Any]:
+        """Dodaje animacje ksztaltu do sekwencji glownej slajdu.
+
+        ``shape_id`` to id ksztaltu, jego nazwa albo skrot ``title`` /
+        ``content``. ``level`` decyduje, czy animowany jest caly ksztalt
+        (``shape``), czy kolejne akapity tekstu (``by_paragraph``).
+        ``exit_effect=True`` zamienia efekt wejscia na wyjscie.
+        """
+        slide = self.slide(slide_index)
+        shape = self._resolve_shape(slide, shape_id)
+
+        effect_constant = lookup_constant(effect, MSO_ANIM_EFFECTS, "effect")
+        trigger_constant = lookup_constant(trigger, MSO_ANIM_TRIGGERS, "trigger")
+        level_constant = lookup_constant(level, MSO_ANIM_LEVELS, "level")
+
+        try:
+            sequence = slide.TimeLine.MainSequence
+        except (com_error, AttributeError) as exc:
+            raise UnsupportedOperationError(
+                "Ta wersja PowerPointa nie udostepnia osi czasu animacji "
+                "(Slide.TimeLine)"
+            ) from exc
+
+        animation = sequence.AddEffect(
+            Shape=shape,
+            effectId=effect_constant,
+            Level=level_constant,
+            trigger=trigger_constant,
+        )
+
+        if exit_effect:
+            animation.Exit = MSO_TRUE
+
+        applied: dict[str, Any] = {}
+        timing = animation.Timing
+        if duration is not None:
+            try:
+                timing.Duration = float(duration)
+                applied["duration"] = float(duration)
+            except com_error:
+                applied["duration"] = None
+        if delay is not None:
+            timing.TriggerDelayTime = float(delay)
+            applied["delay"] = float(delay)
+
+        self._goto_slide(int(slide_index))
+        return {
+            "slide_index": int(slide_index),
+            "shape_id": int(shape.Id),
+            "shape_name": to_python(shape.Name),
+            "effect": effect,
+            "trigger": trigger,
+            "level": level,
+            "exit_effect": bool(exit_effect),
+            "sequence_index": int(sequence.Count),
+            **applied,
+        }
+
+    @action("list_animations")
+    def list_animations(self, slide_index: int) -> dict[str, Any]:
+        """Zwraca sekwencje animacji slajdu w kolejnosci odtwarzania."""
+        slide = self.slide(slide_index)
+
+        try:
+            sequence = slide.TimeLine.MainSequence
+        except (com_error, AttributeError) as exc:
+            raise UnsupportedOperationError(
+                "Ta wersja PowerPointa nie udostepnia osi czasu animacji "
+                "(Slide.TimeLine)"
+            ) from exc
+
+        effects: list[dict[str, Any]] = []
+        for index in range(1, sequence.Count + 1):
+            animation = sequence(index)
+            entry: dict[str, Any] = {
+                "index": index,
+                "effect": constant_name(animation.EffectType, MSO_ANIM_EFFECTS),
+                "effect_id": int(animation.EffectType),
+                "exit_effect": bool(animation.Exit == MSO_TRUE),
+            }
+            try:
+                entry["shape_name"] = to_python(animation.Shape.Name)
+                entry["shape_id"] = int(animation.Shape.Id)
+            except com_error:
+                entry["shape_name"] = None
+                entry["shape_id"] = None
+            try:
+                timing = animation.Timing
+                entry["trigger"] = constant_name(timing.TriggerType, MSO_ANIM_TRIGGERS)
+                entry["duration"] = round(float(timing.Duration), 3)
+                entry["delay"] = round(float(timing.TriggerDelayTime), 3)
+            except com_error:
+                pass
+            effects.append(entry)
+
+        transition = slide.SlideShowTransition
+        return {
+            "slide_index": int(slide_index),
+            "count": len(effects),
+            "effects": effects,
+            "transition": constant_name(transition.EntryEffect, PP_TRANSITIONS),
+        }
+
+    @action("set_transition")
+    def set_transition(
+        self,
+        effect: str = "fade",
+        slide_index: int | None = None,
+        duration: float | None = None,
+        advance_on_click: bool = True,
+        advance_after: float | None = None,
+    ) -> dict[str, Any]:
+        """Ustawia przejscie slajdu; bez ``slide_index`` obejmuje cala prezentacje.
+
+        ``advance_after`` w sekundach wlacza automatyczne przejscie po czasie -
+        niezaleznie od ``advance_on_click``.
+        """
+        presentation = self.presentation()
+        effect_constant = lookup_constant(effect, PP_TRANSITIONS, "effect")
+
+        if slide_index is None:
+            indexes = list(range(1, presentation.Slides.Count + 1))
+        else:
+            indexes = [self.require_index(slide_index, presentation.Slides.Count, "slide_index")]
+
+        duration_applied: float | None = None
+        for index in indexes:
+            transition = presentation.Slides(index).SlideShowTransition
+            transition.EntryEffect = effect_constant
+            transition.AdvanceOnClick = MSO_TRUE if advance_on_click else MSO_FALSE
+
+            if duration is not None:
+                try:
+                    transition.Duration = float(duration)
+                    duration_applied = float(duration)
+                except (com_error, AttributeError):
+                    duration_applied = None
+
+            if advance_after is None:
+                transition.AdvanceOnTime = MSO_FALSE
+            else:
+                transition.AdvanceOnTime = MSO_TRUE
+                transition.AdvanceTime = float(advance_after)
+
+        if len(indexes) == 1:
+            self._goto_slide(indexes[0])
+
+        return {
+            "slides": indexes,
+            "effect": effect,
+            "duration": duration_applied,
+            "advance_on_click": bool(advance_on_click),
+            "advance_after": float(advance_after) if advance_after is not None else None,
         }
 
 

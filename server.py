@@ -571,9 +571,12 @@ def ppt_add_shape(
     height: float,
     fill_color: str | None = None,
     text: str | None = None,
+    line_color: str | None = None,
+    line_width: float | None = None,
 ) -> dict[str, Any]:
     """Wstawia ksztalt: rectangle, rounded_rectangle, oval, triangle, diamond,
-    star, arrow_right, callout, cloud, hexagon."""
+    star, arrow_right, callout, cloud, hexagon. 'fill_color'/'line_color'
+    przyjmuja "none", zeby wylaczyc wypelnienie albo obrys."""
     return call_bridge(
         "powerpoint",
         "add_shape",
@@ -586,6 +589,72 @@ def ppt_add_shape(
             "height": height,
             "fill_color": fill_color,
             "text": text,
+            "line_color": line_color,
+            "line_width": line_width,
+        },
+    )
+
+
+@server.tool()
+def ppt_add_animation(
+    slide_index: int,
+    shape_id: Any,
+    effect: str = "fade",
+    trigger: str = "after_previous",
+    level: str = "shape",
+    duration: float | None = None,
+    delay: float | None = None,
+    exit_effect: bool = False,
+) -> dict[str, Any]:
+    """Animuje ksztalt na slajdzie. 'shape_id' to id, nazwa ksztaltu albo skrot
+    'title'/'content'. Efekty: fade, fly, wipe, zoom, float, grow_and_turn,
+    rise_up, split, wheel, bounce, spin, grow_shrink, teeter i inne.
+    Wyzwalacze: on_click, with_previous, after_previous. 'level' = shape albo
+    by_paragraph (tekst akapit po akapicie). 'duration' i 'delay' w sekundach."""
+    return call_bridge(
+        "powerpoint",
+        "add_animation",
+        {
+            "slide_index": slide_index,
+            "shape_id": shape_id,
+            "effect": effect,
+            "trigger": trigger,
+            "level": level,
+            "duration": duration,
+            "delay": delay,
+            "exit_effect": exit_effect,
+        },
+    )
+
+
+@server.tool()
+def ppt_list_animations(slide_index: int) -> dict[str, Any]:
+    """Zwraca animacje slajdu w kolejnosci odtwarzania wraz z przejsciem slajdu."""
+    return call_bridge("powerpoint", "list_animations", {"slide_index": slide_index})
+
+
+@server.tool()
+def ppt_set_transition(
+    effect: str = "fade",
+    slide_index: int | None = None,
+    duration: float | None = None,
+    advance_on_click: bool = True,
+    advance_after: float | None = None,
+) -> dict[str, Any]:
+    """Ustawia przejscie miedzy slajdami; bez 'slide_index' obejmuje cala
+    prezentacje. Efekty: fade, fade_smoothly, push_left, wipe_right, cover_up,
+    split_vertical_out, zoom_in, morph, honeycomb, gallery_left, cube_left,
+    doors_vertical, curtains, prestige i inne. 'duration' w sekundach,
+    'advance_after' wlacza automatyczna zmiane slajdu po zadanym czasie."""
+    return call_bridge(
+        "powerpoint",
+        "set_transition",
+        {
+            "effect": effect,
+            "slide_index": slide_index,
+            "duration": duration,
+            "advance_on_click": advance_on_click,
+            "advance_after": advance_after,
         },
     )
 

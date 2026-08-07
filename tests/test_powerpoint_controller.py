@@ -99,6 +99,9 @@ class TestDispatch:
             "add_chart",
             "add_table",
             "add_shape",
+            "add_animation",
+            "list_animations",
+            "set_transition",
         ):
             assert name in actions
 
@@ -579,6 +582,53 @@ class TestVisuals:
         assert shape.Fill.ForeColor.RGB == 0x0000FF
         assert shape.TextFrame.TextRange.Text == "Start"
 
+    def test_add_shape_can_drop_theme_outline(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = make_shape(shape_id=32)
+        slides[0].Shapes.AddShape.return_value = shape
+
+        controller.dispatch(
+            "add_shape",
+            {
+                "slide_index": 1,
+                "shape_type": "oval",
+                "left": 0,
+                "top": 0,
+                "width": 20,
+                "height": 20,
+                "fill_color": "#10A37F",
+                "line_color": "none",
+            },
+        )
+
+        assert shape.Line.Visible == 0
+        assert shape.Fill.ForeColor.RGB == 0x7FA310
+
+    def test_add_shape_line_color_and_width(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = make_shape(shape_id=33)
+        slides[0].Shapes.AddShape.return_value = shape
+
+        controller.dispatch(
+            "add_shape",
+            {
+                "slide_index": 1,
+                "shape_type": "rectangle",
+                "left": 0,
+                "top": 0,
+                "width": 20,
+                "height": 20,
+                "fill_color": "none",
+                "line_color": "#FFFFFF",
+                "line_width": 1.5,
+            },
+        )
+
+        assert shape.Fill.Visible == 0
+        assert shape.Line.Visible == -1
+        assert shape.Line.ForeColor.RGB == 0xFFFFFF
+        assert shape.Line.Weight == 1.5
+
 
 class TestErrorMapping:
     def test_com_disconnect_maps_to_connection_error(self, powerpoint):
@@ -623,6 +673,118 @@ class TestErrorMapping:
 
         with pytest.raises(InvalidReferenceError):
             controller.dispatch("delete_slide", {"slide_index": 1})
+
+
+class TestAnimations:
+    def test_add_animation_translates_names_to_constants(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        sequence = slides[0].TimeLine.MainSequence
+        sequence.Count = 1
+
+        result = controller.dispatch(
+            "add_animation",
+            {
+                "slide_index": 1,
+                "shape_id": 5,
+                "effect": "rise_up",
+                "trigger": "with_previous",
+                "level": "by_paragraph",
+                "duration": 0.7,
+                "delay": 0.2,
+            },
+        )
+
+        kwargs = sequence.AddEffect.call_args.kwargs
+        assert kwargs["effectId"] == 34  # msoAnimEffectRiseUp
+        assert kwargs["trigger"] == 2  # msoAnimTriggerWithPrevious
+        assert kwargs["Level"] == 1  # msoAnimateTextByAllLevels
+        assert kwargs["Shape"].Id == 5
+
+        timing = sequence.AddEffect.return_value.Timing
+        assert timing.Duration == 0.7
+        assert timing.TriggerDelayTime == 0.2
+        assert result["shape_id"] == 5
+        assert result["sequence_index"] == 1
+
+    def test_add_animation_accepts_title_shortcut(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        sequence = slides[0].TimeLine.MainSequence
+        sequence.Count = 1
+
+        controller.dispatch("add_animation", {"slide_index": 1, "shape_id": "title"})
+
+        assert sequence.AddEffect.call_args.kwargs["Shape"].Name == "Title 1"
+
+    def test_exit_effect_sets_exit_flag(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        sequence = slides[0].TimeLine.MainSequence
+        sequence.Count = 1
+
+        controller.dispatch(
+            "add_animation",
+            {"slide_index": 1, "shape_id": 5, "effect": "fade", "exit_effect": True},
+        )
+
+        assert sequence.AddEffect.return_value.Exit == -1
+
+    def test_unknown_effect_is_invalid_reference(self, powerpoint):
+        controller, *_ = powerpoint
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "add_animation",
+                {"slide_index": 1, "shape_id": 5, "effect": "teleportacja"},
+            )
+
+    def test_list_animations_reads_sequence(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        effect = MagicMock()
+        effect.EffectType = 10  # msoAnimEffectFade
+        effect.Exit = 0
+        effect.Shape = make_shape(shape_id=5, name="Tresc")
+        effect.Timing.TriggerType = 3
+        effect.Timing.Duration = 0.5
+        effect.Timing.TriggerDelayTime = 0.0
+        slides[0].TimeLine.MainSequence = com_collection([effect])
+        slides[0].SlideShowTransition.EntryEffect = 3849  # ppEffectFadeSmoothly
+
+        result = controller.dispatch("list_animations", {"slide_index": 1})
+
+        assert result["count"] == 1
+        assert result["effects"][0]["effect"] == "fade"
+        assert result["effects"][0]["trigger"] == "after_previous"
+        assert result["effects"][0]["exit_effect"] is False
+        assert result["transition"] == "fade_smoothly"
+
+    def test_set_transition_applies_to_all_slides_by_default(self, powerpoint):
+        controller, _app, presentation, _slides = powerpoint
+        extra = make_slide()
+        presentation.Slides = com_collection([_slides[0], extra])
+
+        result = controller.dispatch(
+            "set_transition", {"effect": "push_left", "duration": 0.8}
+        )
+
+        assert result["slides"] == [1, 2]
+        for slide in (_slides[0], extra):
+            assert slide.SlideShowTransition.EntryEffect == 3853  # ppEffectPushLeft
+            assert slide.SlideShowTransition.Duration == 0.8
+            assert slide.SlideShowTransition.AdvanceOnTime == 0
+
+    def test_set_transition_advance_after_enables_timer(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+
+        controller.dispatch(
+            "set_transition",
+            {"effect": "fade", "slide_index": 1, "advance_after": 5},
+        )
+
+        assert slides[0].SlideShowTransition.AdvanceOnTime == -1
+        assert slides[0].SlideShowTransition.AdvanceTime == 5.0
+
+    def test_set_transition_rejects_slide_out_of_range(self, powerpoint):
+        controller, *_ = powerpoint
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch("set_transition", {"effect": "fade", "slide_index": 9})
 
 
 class TestSeriesNormalization:

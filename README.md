@@ -5,10 +5,11 @@ Serwer MCP, który pozwala Claude'owi sterować **otwartymi** aplikacjami Micros
 promptem, a zmiany widać na żywo w oknie aplikacji — bez pośredniego generowania plików i
 otwierania ich ręcznie.
 
-- 72 narzędzia MCP: `ppt_*` (24), `xl_*` (25), `doc_*` (23)
-- pełny cykl: tworzenie, odczyt istniejących dokumentów, edycja, formatowanie, wykresy, obrazy, tabele
+- 75 narzędzi MCP: `ppt_*` (27), `xl_*` (25), `doc_*` (23)
+- pełny cykl: tworzenie, odczyt istniejących dokumentów, edycja, formatowanie, wykresy, obrazy, tabele,
+  animacje i przejścia slajdów
 - podłącza się do już uruchomionej instancji Office zamiast otwierać drugą
-- 216 testów jednostkowych i integracyjnych działających bez zainstalowanego Office
+- 226 testów jednostkowych i integracyjnych działających bez zainstalowanego Office
 
 ## Architektura
 
@@ -173,14 +174,37 @@ Wszystkie narzędzia zwracają JSON w jednym formacie:
 | `ppt_add_chart(slide_index, chart_type, categories, series_data, ...)` | Wykres z danymi |
 | `ppt_add_table(slide_index, rows, cols, data, left, top, width, height)` | Tabela |
 | `ppt_add_shape(slide_index, shape_type, left, top, width, height, ...)` | Kształt |
+| `ppt_add_animation(slide_index, shape_id, effect, trigger, level, duration, delay, exit_effect)` | Animacja kształtu w sekwencji głównej slajdu |
+| `ppt_list_animations(slide_index)` | Animacje slajdu w kolejności odtwarzania + jego przejście |
+| `ppt_set_transition(effect, slide_index=None, duration, advance_on_click, advance_after)` | Przejście slajdu; bez `slide_index` całej prezentacji |
 
 Układy: `title`, `title_content`, `two_content`, `title_only`, `blank`, `section_header`,
 `comparison`, `picture_with_caption`, `content_with_caption`, `chart`, `table`, `four_objects`.
 Wykresy: `bar`, `column`, `line`, `pie`, `area`, `scatter`, `doughnut`, `radar`, `bubble`.
 Kształty: `rectangle`, `rounded_rectangle`, `oval`, `triangle`, `diamond`, `star`,
-`arrow_right`, `callout`, `cloud`, `hexagon`, `chevron`.
+`arrow_right`, `callout`, `cloud`, `hexagon`, `chevron`. `fill_color` i `line_color`
+przyjmują `"none"`, żeby wyłączyć wypełnienie albo obrys z motywu.
 
 Współrzędne podaje się w punktach: slajd 16:9 ma 960 × 540 pt, 1 cm = 28,35 pt.
+
+#### Animacje i przejścia
+
+Efekty animacji (`MSO_ANIM_EFFECTS`) to m.in. `fade`, `fly`, `wipe`, `zoom`, `float`, `rise_up`,
+`ascend`, `descend`, `split`, `wheel`, `bounce`, `grow_and_turn`, `swivel`, efekty
+wyróżnienia (`spin`, `grow_shrink`, `teeter`, `transparency`, `change_font_color`) oraz ścieżki
+ruchu (`path_circle`, `path_left`, `path_wave`). Pełna mapa nazw jest w
+`bridge/utils/com_helpers.py`.
+
+Wyzwalacze: `on_click`, `with_previous`, `after_previous`, `on_shape_click`.
+`level` steruje ziarnistością: `shape` (cały kształt), `by_paragraph` / `first_level` … `fifth_level`
+(tekst akapitami) oraz `chart_by_category` / `chart_by_series` dla wykresów.
+`exit_effect=True` zamienia efekt wejścia na wyjście.
+
+Przejścia (`PP_TRANSITIONS`): `fade`, `fade_smoothly`, `dissolve`, `cut`, `push_left`,
+`wipe_right`, `cover_up`, `uncover_down`, `split_vertical_out`, `zoom_in`, `wheel_4`,
+`honeycomb`, `gallery_left`, `cube_left`, `flip_right`, `doors_vertical`, `curtains`,
+`prestige`, `fracture`, `page_curl_single_left`, `origami_left`, `morph` i inne.
+`duration` podaje się w sekundach, `advance_after` włącza automatyczną zmianę slajdu po czasie.
 
 ### Excel (`xl_*`)
 
@@ -288,7 +312,7 @@ Przykładowa odpowiedź błędu narzędzia MCP:
 python -m pytest -q
 ```
 
-216 testów, wszystkie bez zainstalowanego Office:
+226 testów, wszystkie bez zainstalowanego Office:
 
 - `tests/test_bridge_protocol.py` — kodowanie/dekodowanie protokołu oraz test integracyjny
   serwera TCP (prawdziwy socket, atrapa kontrolera),
@@ -315,6 +339,15 @@ Scenariusze do ręcznego testu na żywym Office: `examples/example_prompts.md`.
 - **Zamiana tekstu w Wordzie** dopasowuje wielkość liter wstawianego tekstu do znalezionego,
   gdy `match_case=False` — tak samo jak okno „Znajdź i zamień”.
 - **Zapis** wymaga ścieżki przy pierwszym zapisaniu nowego dokumentu (`ppt_save(path=...)`).
+- **Pierwszy `ppt_add_chart` w sesji trwa ~13 s**, bo `ChartData.Activate()` musi wystartować
+  Excela pod wykres. To bardzo blisko domyślnego `OFFICE_BRIDGE_TIMEOUT=15`, więc przy zimnym
+  starcie wywołanie potrafi się wywrócić. Przy prezentacjach z wykresami warto podnieść limit
+  (`OFFICE_BRIDGE_TIMEOUT=45`) albo wywołać wcześniej dowolne narzędzie `xl_*`, żeby rozgrzać Excela.
+- **Wykres wstawia się w stylu motywu** i nie ma narzędzia do formatowania serii, osi ani tła
+  wykresu — na slajdzie o własnej kolorystyce trzeba go poprawić ręcznie albo zbudować
+  prosty wykres słupkowy z `ppt_add_shape`.
+- **Nie ma usuwania pojedynczych kształtów** (`ppt_delete_shape`) — pomyłkę naprawia się
+  usunięciem całego slajdu albo ręcznie w PowerPoincie.
 - Bridge nasłuchuje wyłącznie na localhost i nie ma uwierzytelniania — nie należy wystawiać
   jego portu na zewnątrz.
 
