@@ -5,12 +5,13 @@ Serwer MCP, który pozwala Claude'owi sterować **otwartymi** aplikacjami Micros
 promptem, a zmiany widać na żywo w oknie aplikacji — bez pośredniego generowania plików i
 otwierania ich ręcznie.
 
-- 80 narzędzi MCP: `ppt_*` (32), `xl_*` (25), `doc_*` (23)
+- 87 narzędzi MCP: `ppt_*` (39), `xl_*` (25), `doc_*` (23)
 - pełny cykl: tworzenie, odczyt istniejących dokumentów, edycja, formatowanie, wykresy, obrazy, tabele,
   animacje i przejścia slajdów
 - eksport slajdu do PNG — model może obejrzeć własny slajd i poprawić układ zamiast pracować w ciemno
+- styl jako jeden byt: paleta i czcionki motywu, tło na wzorcu — zamiast powtarzania hexów przy każdym kształcie
 - podłącza się do już uruchomionej instancji Office zamiast otwierać drugą
-- 239 testów jednostkowych i integracyjnych działających bez zainstalowanego Office
+- 271 testów jednostkowych i integracyjnych działających bez zainstalowanego Office
 
 ## Architektura
 
@@ -175,6 +176,13 @@ Wszystkie narzędzia zwracają JSON w jednym formacie:
 | `ppt_add_chart(slide_index, chart_type, categories, series_data, ...)` | Wykres z danymi |
 | `ppt_add_table(slide_index, rows, cols, data, left, top, width, height)` | Tabela |
 | `ppt_add_shape(slide_index, shape_type, left, top, width, height, ...)` | Kształt |
+| `ppt_get_theme()` | Paleta kolorów i czcionki motywu |
+| `ppt_set_theme_colors(colors)` | Podmienia kolory palety motywu |
+| `ppt_set_theme_fonts(major, minor)` | Czcionka nagłówków i treści |
+| `ppt_set_master_background(color, image_path, apply_to_slides=True)` | Tło raz, na wzorcu slajdów |
+| `ppt_set_shape_format(slide_index, shape_id, ...)` | Gradient, przezroczystość, cień, obrys, promień rogu |
+| `ppt_set_paragraph_format(slide_index, shape_id, ...)` | Interlinia, odstępy, wyrównanie, kotwica, marginesy |
+| `ppt_format_chart(slide_index, shape_id, ...)` | Kolory serii, osie, legenda, etykiety, tło wykresu |
 | `ppt_delete_shape(slide_index, shape_id)` | Usuwa kształt ze slajdu |
 | `ppt_set_shape_position(slide_index, shape_id, left, top, width, height, rotation)` | Przesuwa, skaluje i obraca istniejący kształt |
 | `ppt_set_shape_order(slide_index, shape_id, order)` | Warstwa kształtu: `front`, `back`, `forward`, `backward` |
@@ -192,6 +200,25 @@ Kształty: `rectangle`, `rounded_rectangle`, `oval`, `triangle`, `diamond`, `sta
 przyjmują `"none"`, żeby wyłączyć wypełnienie albo obrys z motywu.
 
 Współrzędne podaje się w punktach: slajd 16:9 ma 960 × 540 pt, 1 cm = 28,35 pt.
+
+#### Styl w jednym miejscu
+
+`ppt_set_theme_colors` + `ppt_set_theme_fonts` + `ppt_set_master_background` ustawiają wygląd
+**raz**, na wzorcu, zamiast powtarzania tego samego hexa przy każdym kształcie:
+
+```
+ppt_set_theme_colors({"dark1": "#0B1014", "light1": "#ECF2F0", "accent1": "#10A37F"})
+ppt_set_theme_fonts(major="Segoe UI", minor="Segoe UI")
+ppt_set_master_background(color="#0B1014")   # wszystkie slajdy naraz
+```
+
+`apply_to_slides=True` (domyślnie) włącza slajdom `FollowMasterBackground`, więc te, które
+miały własne tło z `ppt_set_background`, wracają pod wzorzec. `ppt_get_theme()` czyta paletę
+z powrotem.
+
+**Uwaga na łamanie wierszy.** COM traktuje `\n` jako *miękki* łamacz wiersza wewnątrz jednego
+akapitu. Kontroler zamienia `\n` i `\r\n` na `\r`, czyli prawdziwy separator akapitu — bez tego
+`Paragraphs().Count` zwracałoby 1 i `ppt_set_paragraph_format` nie miałoby czego adresować.
 
 #### Pętla zwrotna
 
@@ -330,7 +357,7 @@ Przykładowa odpowiedź błędu narzędzia MCP:
 python -m pytest -q
 ```
 
-239 testów, wszystkie bez zainstalowanego Office:
+271 testów, wszystkie bez zainstalowanego Office:
 
 - `tests/test_bridge_protocol.py` — kodowanie/dekodowanie protokołu oraz test integracyjny
   serwera TCP (prawdziwy socket, atrapa kontrolera),
@@ -361,9 +388,9 @@ Scenariusze do ręcznego testu na żywym Office: `examples/example_prompts.md`.
   Excela pod wykres. To bardzo blisko domyślnego `OFFICE_BRIDGE_TIMEOUT=15`, więc przy zimnym
   starcie wywołanie potrafi się wywrócić. Przy prezentacjach z wykresami warto podnieść limit
   (`OFFICE_BRIDGE_TIMEOUT=45`) albo wywołać wcześniej dowolne narzędzie `xl_*`, żeby rozgrzać Excela.
-- **Wykres wstawia się w stylu motywu** i nie ma narzędzia do formatowania serii, osi ani tła
-  wykresu — na slajdzie o własnej kolorystyce trzeba go poprawić ręcznie albo zbudować
-  prosty wykres słupkowy z `ppt_add_shape`.
+- **Wykres wstawia się w stylu motywu**; do dopasowania go do slajdu służy `ppt_format_chart`
+  (kolory serii, kolor tekstu osi/legendy/etykiet, przezroczyste tło, siatka). Nie ma dostępu
+  do formatowania pojedynczych punktów danych ani osi drugorzędnej.
 - **Eksport do PDF idzie przez `SaveCopyAs`, nie `ExportAsFixedFormat`.** Ta druga metoda jest
   niewywoływalna przez pywin32 — wygenerowany wrapper podstawia `PyOleEmpty` pod parametr
   `ExternalExporter` i każde wywołanie kończy się `TypeError: The Python instance can not be

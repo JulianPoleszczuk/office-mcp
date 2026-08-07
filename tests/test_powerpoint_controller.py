@@ -107,6 +107,13 @@ class TestDispatch:
             "set_shape_order",
             "export_slide",
             "export_pdf",
+            "get_theme",
+            "set_theme_colors",
+            "set_theme_fonts",
+            "set_master_background",
+            "set_shape_format",
+            "set_paragraph_format",
+            "format_chart",
         ):
             assert name in actions
 
@@ -680,6 +687,346 @@ class TestErrorMapping:
             controller.dispatch("delete_slide", {"slide_index": 1})
 
 
+class TestTheme:
+    def test_set_theme_colors_maps_names_to_scheme_indexes(self, powerpoint):
+        controller, _app, presentation, _slides = powerpoint
+        scheme = presentation.SlideMaster.Theme.ThemeColorScheme
+
+        controller.dispatch(
+            "set_theme_colors",
+            {"colors": {"accent1": "#10A37F", "dark1": "#0B1014", "hyperlink": "blue"}},
+        )
+
+        used = [call.args[0] for call in scheme.Colors.call_args_list]
+        assert 5 in used  # accent1
+        assert 1 in used  # dark1
+        assert 11 in used  # hyperlink
+
+    def test_set_theme_colors_rejects_unknown_name(self, powerpoint):
+        controller, *_ = powerpoint
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch("set_theme_colors", {"colors": {"akcent7": "red"}})
+
+    def test_set_theme_colors_rejects_empty_dict(self, powerpoint):
+        controller, *_ = powerpoint
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch("set_theme_colors", {"colors": {}})
+
+    def test_set_theme_fonts_writes_latin_slot(self, powerpoint):
+        controller, _app, presentation, _slides = powerpoint
+        fonts = presentation.SlideMaster.Theme.ThemeFontScheme
+
+        controller.dispatch(
+            "set_theme_fonts", {"major": "Segoe UI", "minor": "Segoe UI"}
+        )
+
+        assert fonts.MajorFont.call_args[0][0] == 1  # msoThemeLatin
+        assert fonts.MajorFont.return_value.Name == "Segoe UI"
+        assert fonts.MinorFont.return_value.Name == "Segoe UI"
+
+    def test_set_theme_fonts_without_arguments_is_rejected(self, powerpoint):
+        controller, *_ = powerpoint
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch("set_theme_fonts", {})
+
+    def test_master_background_makes_slides_follow_master(self, powerpoint):
+        controller, _app, presentation, slides = powerpoint
+
+        result = controller.dispatch(
+            "set_master_background", {"color": "#0B1014"}
+        )
+
+        fill = presentation.SlideMaster.Background.Fill
+        fill.Solid.assert_called_once()
+        assert fill.ForeColor.RGB == 0x14100B
+        assert slides[0].FollowMasterBackground == -1
+        assert result["slides_following_master"] == 1
+
+    def test_master_background_can_skip_slides(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        slides[0].FollowMasterBackground = 0
+
+        result = controller.dispatch(
+            "set_master_background",
+            {"color": "#0B1014", "apply_to_slides": False},
+        )
+
+        assert slides[0].FollowMasterBackground == 0
+        assert result["slides_following_master"] == 0
+
+    def test_master_background_needs_color_or_image(self, powerpoint):
+        controller, *_ = powerpoint
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch("set_master_background", {})
+
+
+class TestShapeFormat:
+    def test_gradient_sets_both_stops(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = slides[0].Shapes(1)
+
+        controller.dispatch(
+            "set_shape_format",
+            {
+                "slide_index": 1,
+                "shape_id": 5,
+                "gradient_from": "#10A37F",
+                "gradient_to": "#3FE0A0",
+                "gradient_style": "diagonal_up",
+            },
+        )
+
+        shape.Fill.TwoColorGradient.assert_called_once_with(3, 1)
+        assert shape.Fill.ForeColor.RGB == 0x7FA310
+        assert shape.Fill.BackColor.RGB == 0xA0E03F
+
+    def test_half_a_gradient_is_rejected(self, powerpoint):
+        controller, *_ = powerpoint
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "set_shape_format",
+                {"slide_index": 1, "shape_id": 5, "gradient_from": "#10A37F"},
+            )
+
+    def test_transparency_accepts_percent(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = slides[0].Shapes(1)
+
+        controller.dispatch(
+            "set_shape_format",
+            {"slide_index": 1, "shape_id": 5, "fill_transparency": 40},
+        )
+
+        assert shape.Fill.Transparency == pytest.approx(0.4)
+
+    def test_transparency_out_of_range_is_rejected(self, powerpoint):
+        controller, *_ = powerpoint
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "set_shape_format",
+                {"slide_index": 1, "shape_id": 5, "fill_transparency": 140},
+            )
+
+    def test_shadow_details_turn_shadow_on(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = slides[0].Shapes(1)
+
+        controller.dispatch(
+            "set_shape_format",
+            {
+                "slide_index": 1,
+                "shape_id": 5,
+                "shadow_blur": 12,
+                "shadow_offset_y": 4,
+                "shadow_color": "black",
+            },
+        )
+
+        assert shape.Shadow.Visible == -1
+        assert shape.Shadow.Style == 2
+        assert shape.Shadow.Blur == 12.0
+        assert shape.Shadow.OffsetY == 4.0
+
+    def test_shadow_false_turns_it_off(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = slides[0].Shapes(1)
+
+        controller.dispatch(
+            "set_shape_format", {"slide_index": 1, "shape_id": 5, "shadow": False}
+        )
+
+        assert shape.Shadow.Visible == 0
+
+    def test_line_dash_maps_to_constant(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = slides[0].Shapes(1)
+
+        controller.dispatch(
+            "set_shape_format",
+            {"slide_index": 1, "shape_id": 5, "line_dash": "round_dot"},
+        )
+
+        assert shape.Line.DashStyle == 3
+
+    def test_corner_radius_needs_adjustment_handle(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        slides[0].Shapes(1).Adjustments.Count = 0
+
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "set_shape_format",
+                {"slide_index": 1, "shape_id": 5, "corner_radius": 0.3},
+            )
+
+    def test_corner_radius_uses_setitem(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        adjustments = slides[0].Shapes(1).Adjustments
+        adjustments.Count = 1
+
+        controller.dispatch(
+            "set_shape_format",
+            {"slide_index": 1, "shape_id": 5, "corner_radius": 0.25},
+        )
+
+        adjustments.SetItem.assert_called_once_with(1, 0.25)
+
+
+class TestParagraphFormat:
+    def test_applies_spacing_and_anchor(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = slides[0].Shapes(1)
+
+        result = controller.dispatch(
+            "set_paragraph_format",
+            {
+                "slide_index": 1,
+                "shape_id": 5,
+                "line_spacing": 1.2,
+                "space_after": 8,
+                "alignment": "center",
+                "vertical_anchor": "middle",
+            },
+        )
+
+        fmt = shape.TextFrame.TextRange.ParagraphFormat
+        assert fmt.SpaceWithin == 1.2
+        assert fmt.SpaceAfter == 8.0
+        assert fmt.Alignment == 2
+        assert shape.TextFrame.VerticalAnchor == 3
+        assert result["paragraph"] == "all"
+
+    def test_targets_single_paragraph(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = slides[0].Shapes(1)
+        shape.TextFrame.TextRange.Paragraphs.return_value.Count = 3
+
+        result = controller.dispatch(
+            "set_paragraph_format",
+            {"slide_index": 1, "shape_id": 5, "paragraph": 2, "space_before": 6},
+        )
+
+        assert shape.TextFrame.TextRange.Paragraphs.call_args[0] == (2,)
+        assert result["paragraph"] == 2
+
+    def test_paragraph_out_of_range(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        slides[0].Shapes(1).TextFrame.TextRange.Paragraphs.return_value.Count = 2
+
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "set_paragraph_format",
+                {"slide_index": 1, "shape_id": 5, "paragraph": 9, "space_before": 6},
+            )
+
+    def test_autosize_and_margins(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        frame = slides[0].Shapes(1).TextFrame
+
+        controller.dispatch(
+            "set_paragraph_format",
+            {"slide_index": 1, "shape_id": 5, "autosize": True, "margin": 0},
+        )
+
+        assert frame.AutoSize == 1
+        assert frame.MarginLeft == 0.0
+        assert frame.MarginBottom == 0.0
+
+    def test_no_fields_is_rejected(self, powerpoint):
+        controller, *_ = powerpoint
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "set_paragraph_format", {"slide_index": 1, "shape_id": 5}
+            )
+
+    def test_shape_without_text_frame_is_rejected(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        slides[0].Shapes(1).HasTextFrame = False
+
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "set_paragraph_format",
+                {"slide_index": 1, "shape_id": 5, "line_spacing": 1.5},
+            )
+
+
+class TestChartFormat:
+    def test_non_chart_shape_is_rejected(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        slides[0].Shapes(1).HasChart = False
+
+        with pytest.raises(InvalidReferenceError):
+            controller.dispatch(
+                "format_chart", {"slide_index": 1, "shape_id": 5, "data_labels": True}
+            )
+
+    def test_series_colors_stop_at_series_count(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = slides[0].Shapes(1)
+        shape.HasChart = True
+        shape.Chart.SeriesCollection.return_value.Count = 2
+
+        result = controller.dispatch(
+            "format_chart",
+            {
+                "slide_index": 1,
+                "shape_id": 5,
+                "series_colors": ["#10A37F", "#19C37D", "#3FE0A0"],
+            },
+        )
+
+        assert result["applied"]["series_colored"] == 2
+
+    def test_transparent_background_hides_chart_area(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = slides[0].Shapes(1)
+        shape.HasChart = True
+        shape.Chart.SeriesCollection.return_value.Count = 1
+
+        controller.dispatch(
+            "format_chart", {"slide_index": 1, "shape_id": 5, "background": "none"}
+        )
+
+        assert shape.Chart.ChartArea.Format.Fill.Visible == 0
+        assert shape.Chart.PlotArea.Format.Fill.Visible == 0
+
+    def test_legend_position_maps_to_xl_constant(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = slides[0].Shapes(1)
+        shape.HasChart = True
+        shape.Chart.SeriesCollection.return_value.Count = 1
+
+        controller.dispatch(
+            "format_chart", {"slide_index": 1, "shape_id": 5, "legend": "bottom"}
+        )
+
+        assert shape.Chart.HasLegend == -1
+        assert shape.Chart.Legend.Position == -4107
+
+    def test_legend_false_turns_it_off(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = slides[0].Shapes(1)
+        shape.HasChart = True
+        shape.Chart.SeriesCollection.return_value.Count = 1
+
+        controller.dispatch(
+            "format_chart", {"slide_index": 1, "shape_id": 5, "legend": False}
+        )
+
+        assert shape.Chart.HasLegend == 0
+
+    def test_gridlines_target_value_axis(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = slides[0].Shapes(1)
+        shape.HasChart = True
+        shape.Chart.SeriesCollection.return_value.Count = 1
+
+        controller.dispatch(
+            "format_chart", {"slide_index": 1, "shape_id": 5, "gridlines": False}
+        )
+
+        assert shape.Chart.Axes.call_args[0][0] == 2  # xlValue
+
+
 class TestShapeEditing:
     def test_delete_shape_by_id(self, powerpoint):
         controller, _app, _presentation, slides = powerpoint
@@ -922,6 +1269,67 @@ class TestAnimations:
         controller, *_ = powerpoint
         with pytest.raises(InvalidReferenceError):
             controller.dispatch("set_transition", {"effect": "fade", "slide_index": 9})
+
+
+class TestParagraphText:
+    def test_newlines_become_paragraph_separators(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = make_shape(shape_id=40)
+        slides[0].Shapes.AddTextbox.return_value = shape
+
+        controller.dispatch(
+            "add_textbox",
+            {
+                "slide_index": 1,
+                "text": "Pierwszy\nDrugi\r\nTrzeci",
+                "left": 0,
+                "top": 0,
+                "width": 100,
+                "height": 50,
+            },
+        )
+
+        # \n to w COM miekki lamacz wiersza - akapity rozdziela dopiero \r
+        assert shape.TextFrame.TextRange.Text == "Pierwszy\rDrugi\rTrzeci"
+
+    def test_shape_text_is_normalized_too(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = make_shape(shape_id=41)
+        slides[0].Shapes.AddShape.return_value = shape
+
+        controller.dispatch(
+            "add_shape",
+            {
+                "slide_index": 1,
+                "shape_type": "rectangle",
+                "left": 0,
+                "top": 0,
+                "width": 10,
+                "height": 10,
+                "text": "Gora\nDol",
+            },
+        )
+
+        assert shape.TextFrame.TextRange.Text == "Gora\rDol"
+
+    def test_plain_text_is_untouched(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        shape = make_shape(shape_id=42)
+        slides[0].Shapes.AddTextbox.return_value = shape
+
+        controller.dispatch(
+            "add_textbox",
+            {
+                "slide_index": 1,
+                "text": "Bez lamania",
+                "left": 0,
+                "top": 0,
+                "width": 100,
+                "height": 50,
+            },
+        )
+
+        assert shape.TextFrame.TextRange.Text == "Bez lamania"
 
 
 class TestSeriesNormalization:

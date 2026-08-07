@@ -13,15 +13,20 @@ from typing import Any
 from bridge.controllers.base import BaseController, action
 from bridge.utils.com_helpers import (
     CHART_TYPES,
+    MSO_ANCHORS,
     MSO_ANIM_EFFECTS,
     MSO_ANIM_LEVELS,
     MSO_ANIM_TRIGGERS,
+    MSO_GRADIENT_STYLES,
+    MSO_LINE_DASHES,
+    MSO_THEME_COLORS,
     MSO_ZORDER,
     PP_EXPORT_FILTERS,
     PP_LAYOUTS,
     PP_SAVE_FORMATS,
     PP_TRANSITIONS,
     SHAPE_TYPES,
+    XL_LEGEND_POSITIONS,
     bgr_to_hex,
     com_address,
     com_error,
@@ -41,6 +46,21 @@ from bridge.utils.errors import (
 MSO_TEXT_HORIZONTAL = 1
 MSO_TRUE = -1
 MSO_FALSE = 0
+
+MSO_THEME_LATIN = 1
+MSO_SHADOW_OUTER = 2
+PP_AUTOSIZE_NONE = 0
+PP_AUTOSIZE_FIT = 1
+XL_CATEGORY_AXIS = 1
+XL_VALUE_AXIS = 2
+
+PP_ALIGNMENTS: dict[str, int] = {
+    "left": 1,
+    "center": 2,
+    "centre": 2,
+    "right": 3,
+    "justify": 4,
+}
 
 PLACEHOLDER_TYPES = {
     1: "title",
@@ -376,7 +396,7 @@ class PowerPointController(BaseController):
             title_shape = self._title_shape(slide)
             if title_shape is None:
                 title_shape = slide.Shapes.AddTextbox(MSO_TEXT_HORIZONTAL, 60, 40, 600, 60)
-            title_shape.TextFrame.TextRange.Text = title
+            title_shape.TextFrame.TextRange.Text = _paragraph_text(title)
 
         self._goto_slide(position)
         return {
@@ -428,7 +448,7 @@ class PowerPointController(BaseController):
             shape.TextFrame.TextRange.Font.Size = 32
             created = True
 
-        shape.TextFrame.TextRange.Text = text
+        shape.TextFrame.TextRange.Text = _paragraph_text(text)
         self._goto_slide(int(slide_index))
         return {
             "slide_index": int(slide_index),
@@ -456,7 +476,7 @@ class PowerPointController(BaseController):
             MSO_TEXT_HORIZONTAL, float(left), float(top), float(width), float(height)
         )
         text_range = shape.TextFrame.TextRange
-        text_range.Text = text
+        text_range.Text = _paragraph_text(text)
 
         if font_size is not None:
             text_range.Font.Size = float(font_size)
@@ -465,12 +485,9 @@ class PowerPointController(BaseController):
         if color is not None:
             text_range.Font.Color.RGB = parse_color(color)
         if align:
-            text_range.ParagraphFormat.Alignment = {
-                "left": 1,
-                "center": 2,
-                "right": 3,
-                "justify": 4,
-            }.get(str(align).lower(), 1)
+            text_range.ParagraphFormat.Alignment = PP_ALIGNMENTS.get(
+                str(align).strip().lower(), PP_ALIGNMENTS["left"]
+            )
 
         self._goto_slide(int(slide_index))
         return {"slide_index": int(slide_index), "shape_id": int(shape.Id)}
@@ -621,7 +638,9 @@ class PowerPointController(BaseController):
         """Ustawia notatki prelegenta dla slajdu."""
         slide = self.slide(slide_index)
         try:
-            slide.NotesPage.Shapes.Placeholders(2).TextFrame.TextRange.Text = text
+            slide.NotesPage.Shapes.Placeholders(2).TextFrame.TextRange.Text = (
+                _paragraph_text(text)
+            )
         except com_error as exc:
             raise UnsupportedOperationError(
                 "Slajd nie ma miejsca na notatki prelegenta"
@@ -901,7 +920,7 @@ class PowerPointController(BaseController):
                 if value is None:
                     continue
                 cell = table.Cell(row_index, column_index)
-                cell.Shape.TextFrame.TextRange.Text = str(value)
+                cell.Shape.TextFrame.TextRange.Text = _paragraph_text(value)
                 if header_bold and row_index == 1:
                     cell.Shape.TextFrame.TextRange.Font.Bold = MSO_TRUE
                 filled += 1
@@ -956,7 +975,7 @@ class PowerPointController(BaseController):
             shape.Line.Visible = MSO_TRUE
             shape.Line.Weight = float(line_width)
         if text:
-            shape.TextFrame.TextRange.Text = text
+            shape.TextFrame.TextRange.Text = _paragraph_text(text)
 
         self._goto_slide(int(slide_index))
         return {
@@ -1127,6 +1146,428 @@ class PowerPointController(BaseController):
             "slide_count": int(presentation.Slides.Count),
             "embed_fonts": bool(embed_fonts),
             "size_bytes": os.path.getsize(target) if os.path.isfile(target) else None,
+        }
+
+    def _theme(self) -> Any:
+        """Motyw wzorca slajdow - jedno miejsce, z ktorego zyje cala kolorystyka."""
+        return self.presentation().SlideMaster.Theme
+
+    @action("get_theme")
+    def get_theme(self) -> dict[str, Any]:
+        """Zwraca palete i czcionki motywu - do sprawdzenia, co jest ustawione."""
+        theme = self._theme()
+        scheme = theme.ThemeColorScheme
+        fonts = theme.ThemeFontScheme
+
+        return {
+            "colors": {
+                name: bgr_to_hex(scheme.Colors(index).RGB)
+                for name, index in MSO_THEME_COLORS.items()
+                if index <= int(scheme.Count)
+            },
+            "major_font": to_python(fonts.MajorFont(MSO_THEME_LATIN).Name),
+            "minor_font": to_python(fonts.MinorFont(MSO_THEME_LATIN).Name),
+            "theme_name": to_python(self.presentation().SlideMaster.Design.Name),
+        }
+
+    @action("set_theme_colors")
+    def set_theme_colors(self, colors: dict[str, Any]) -> dict[str, Any]:
+        """Podmienia kolory w palecie motywu.
+
+        ``colors`` to slownik ``{"accent1": "#10A37F", "dark1": "#0B1014"}``.
+        Nazwy pochodza z ``MSO_THEME_COLORS``: ``dark1``/``text1``,
+        ``light1``/``background1``, ``dark2``, ``light2``, ``accent1``-``accent6``,
+        ``hyperlink``, ``followed_hyperlink``.
+        """
+        if not isinstance(colors, dict) or not colors:
+            raise InvalidReferenceError(
+                "Podaj slownik kolorow, np. {\"accent1\": \"#10A37F\"}"
+            )
+
+        scheme = self._theme().ThemeColorScheme
+        applied: dict[str, Any] = {}
+        for name, value in colors.items():
+            index = lookup_constant(name, MSO_THEME_COLORS, "nazwa koloru motywu")
+            scheme.Colors(index).RGB = parse_color(value)
+            applied[str(name)] = bgr_to_hex(scheme.Colors(index).RGB)
+
+        return {"colors": applied}
+
+    @action("set_theme_fonts")
+    def set_theme_fonts(
+        self, major: str | None = None, minor: str | None = None
+    ) -> dict[str, Any]:
+        """Ustawia czcionki motywu: ``major`` dla naglowkow, ``minor`` dla tresci."""
+        if not major and not minor:
+            raise InvalidReferenceError("Podaj 'major', 'minor' albo oba")
+
+        fonts = self._theme().ThemeFontScheme
+        if major:
+            fonts.MajorFont(MSO_THEME_LATIN).Name = str(major)
+        if minor:
+            fonts.MinorFont(MSO_THEME_LATIN).Name = str(minor)
+
+        return {
+            "major_font": to_python(fonts.MajorFont(MSO_THEME_LATIN).Name),
+            "minor_font": to_python(fonts.MinorFont(MSO_THEME_LATIN).Name),
+        }
+
+    @action("set_master_background")
+    def set_master_background(
+        self,
+        color: Any = None,
+        image_path: str | None = None,
+        apply_to_slides: bool = True,
+    ) -> dict[str, Any]:
+        """Ustawia tlo na wzorcu slajdow - raz dla calej prezentacji.
+
+        ``apply_to_slides=True`` wlacza slajdom ``FollowMasterBackground``, wiec
+        te, ktore mialy wlasne tlo z ``set_background``, wracaja pod wzorzec.
+        """
+        if color is None and not image_path:
+            raise InvalidReferenceError("Podaj kolor albo sciezke do obrazu tla")
+
+        presentation = self.presentation()
+        fill = presentation.SlideMaster.Background.Fill
+
+        if image_path:
+            resolved = self.resolve_existing_path(image_path)
+            fill.UserPicture(resolved)
+            applied: dict[str, Any] = {"image_path": resolved}
+        else:
+            fill.Solid()
+            fill.ForeColor.RGB = parse_color(color)
+            applied = {"color": bgr_to_hex(fill.ForeColor.RGB)}
+
+        followed = 0
+        if apply_to_slides:
+            for index in range(1, presentation.Slides.Count + 1):
+                presentation.Slides(index).FollowMasterBackground = MSO_TRUE
+                followed += 1
+
+        return {**applied, "slides_following_master": followed}
+
+    @action("set_shape_format")
+    def set_shape_format(
+        self,
+        slide_index: int,
+        shape_id: Any,
+        fill_color: Any = None,
+        fill_transparency: float | None = None,
+        gradient_from: Any = None,
+        gradient_to: Any = None,
+        gradient_style: str = "vertical",
+        line_color: Any = None,
+        line_width: float | None = None,
+        line_dash: str | None = None,
+        shadow: bool | None = None,
+        shadow_color: Any = None,
+        shadow_blur: float | None = None,
+        shadow_offset_x: float | None = None,
+        shadow_offset_y: float | None = None,
+        shadow_transparency: float | None = None,
+        corner_radius: float | None = None,
+    ) -> dict[str, Any]:
+        """Wyglad istniejacego ksztaltu: gradient, przezroczystosc, cien, obrys.
+
+        ``gradient_from`` + ``gradient_to`` wlaczaja gradient dwukolorowy
+        (``gradient_style``: horizontal, vertical, diagonal_up, diagonal_down,
+        from_corner, from_center). ``corner_radius`` 0.0-0.5 dziala na ksztaltach
+        z uchwytem regulacji, np. ``rounded_rectangle``.
+        """
+        slide = self.slide(slide_index)
+        shape = self._resolve_shape(slide, shape_id)
+        applied: dict[str, Any] = {}
+
+        if gradient_from is not None and gradient_to is not None:
+            style = lookup_constant(gradient_style, MSO_GRADIENT_STYLES, "gradient_style")
+            shape.Fill.TwoColorGradient(style, 1)
+            shape.Fill.ForeColor.RGB = parse_color(gradient_from)
+            shape.Fill.BackColor.RGB = parse_color(gradient_to)
+            applied["gradient"] = {
+                "from": bgr_to_hex(shape.Fill.ForeColor.RGB),
+                "to": bgr_to_hex(shape.Fill.BackColor.RGB),
+                "style": gradient_style,
+            }
+        elif gradient_from is not None or gradient_to is not None:
+            raise InvalidReferenceError(
+                "Gradient wymaga obu kolorow: gradient_from i gradient_to"
+            )
+        elif fill_color is not None:
+            if str(fill_color).strip().lower() == "none":
+                shape.Fill.Visible = MSO_FALSE
+                applied["fill"] = "none"
+            else:
+                shape.Fill.Solid()
+                shape.Fill.ForeColor.RGB = parse_color(fill_color)
+                applied["fill"] = bgr_to_hex(shape.Fill.ForeColor.RGB)
+
+        if fill_transparency is not None:
+            shape.Fill.Transparency = _unit_fraction(fill_transparency, "fill_transparency")
+            applied["fill_transparency"] = round(float(shape.Fill.Transparency), 3)
+
+        if line_color is not None:
+            if str(line_color).strip().lower() == "none":
+                shape.Line.Visible = MSO_FALSE
+                applied["line"] = "none"
+            else:
+                shape.Line.Visible = MSO_TRUE
+                shape.Line.ForeColor.RGB = parse_color(line_color)
+                applied["line"] = bgr_to_hex(shape.Line.ForeColor.RGB)
+        if line_width is not None:
+            shape.Line.Visible = MSO_TRUE
+            shape.Line.Weight = float(line_width)
+            applied["line_width"] = float(line_width)
+        if line_dash is not None:
+            shape.Line.Visible = MSO_TRUE
+            shape.Line.DashStyle = lookup_constant(line_dash, MSO_LINE_DASHES, "line_dash")
+            applied["line_dash"] = line_dash
+
+        shadow_requested = any(
+            value is not None
+            for value in (
+                shadow_color,
+                shadow_blur,
+                shadow_offset_x,
+                shadow_offset_y,
+                shadow_transparency,
+            )
+        )
+        if shadow is not None or shadow_requested:
+            visible = MSO_TRUE if (shadow or (shadow is None and shadow_requested)) else MSO_FALSE
+            shape.Shadow.Visible = visible
+            if visible == MSO_TRUE:
+                shape.Shadow.Style = MSO_SHADOW_OUTER
+                if shadow_color is not None:
+                    shape.Shadow.ForeColor.RGB = parse_color(shadow_color)
+                if shadow_blur is not None:
+                    shape.Shadow.Blur = float(shadow_blur)
+                if shadow_offset_x is not None:
+                    shape.Shadow.OffsetX = float(shadow_offset_x)
+                if shadow_offset_y is not None:
+                    shape.Shadow.OffsetY = float(shadow_offset_y)
+                if shadow_transparency is not None:
+                    shape.Shadow.Transparency = _unit_fraction(
+                        shadow_transparency, "shadow_transparency"
+                    )
+            applied["shadow"] = visible == MSO_TRUE
+
+        if corner_radius is not None:
+            if int(shape.Adjustments.Count) < 1:
+                raise InvalidReferenceError(
+                    "Ten ksztalt nie ma uchwytu regulacji - corner_radius dziala "
+                    "np. na rounded_rectangle"
+                )
+            # Adjustments to parametryzowana wlasciwosc COM; pywin32 wystawia ja
+            # do zapisu jako SetItem, zwyklego przypisania nie da sie uzyc.
+            shape.Adjustments.SetItem(1, _unit_fraction(corner_radius, "corner_radius"))
+            applied["corner_radius"] = round(float(shape.Adjustments.Item(1)), 4)
+
+        self._goto_slide(int(slide_index))
+        return {
+            "slide_index": int(slide_index),
+            "shape_id": int(shape.Id),
+            "applied": applied,
+        }
+
+    @action("set_paragraph_format")
+    def set_paragraph_format(
+        self,
+        slide_index: int,
+        shape_id: Any,
+        paragraph: int | None = None,
+        line_spacing: float | None = None,
+        space_before: float | None = None,
+        space_after: float | None = None,
+        alignment: str | None = None,
+        vertical_anchor: str | None = None,
+        autosize: bool | None = None,
+        word_wrap: bool | None = None,
+        margin: float | None = None,
+    ) -> dict[str, Any]:
+        """Typografia akapitu: interlinia, odstepy, wyrownanie, kotwica pionowa.
+
+        ``paragraph`` bez wartosci obejmuje caly tekst ksztaltu, z numerem
+        (1-based) tylko wskazany akapit. ``line_spacing`` to wielokrotnosc
+        wysokosci wiersza (1.0 = pojedyncza), odstepy w punktach.
+        """
+        slide = self.slide(slide_index)
+        shape = self._resolve_shape(slide, shape_id)
+
+        if not shape.HasTextFrame:
+            raise InvalidReferenceError("Ten ksztalt nie ma ramki tekstowej")
+
+        frame = shape.TextFrame
+        text_range = frame.TextRange
+        if paragraph is not None:
+            count = int(text_range.Paragraphs().Count)
+            index = self.require_index(paragraph, count, "paragraph")
+            text_range = text_range.Paragraphs(index)
+
+        applied: dict[str, Any] = {}
+        paragraph_format = text_range.ParagraphFormat
+
+        if line_spacing is not None:
+            paragraph_format.SpaceWithin = float(line_spacing)
+            applied["line_spacing"] = float(line_spacing)
+        if space_before is not None:
+            paragraph_format.SpaceBefore = float(space_before)
+            applied["space_before"] = float(space_before)
+        if space_after is not None:
+            paragraph_format.SpaceAfter = float(space_after)
+            applied["space_after"] = float(space_after)
+        if alignment is not None:
+            paragraph_format.Alignment = lookup_constant(
+                alignment, PP_ALIGNMENTS, "alignment"
+            )
+            applied["alignment"] = alignment
+
+        if vertical_anchor is not None:
+            frame.VerticalAnchor = lookup_constant(
+                vertical_anchor, MSO_ANCHORS, "vertical_anchor"
+            )
+            applied["vertical_anchor"] = vertical_anchor
+        if autosize is not None:
+            frame.AutoSize = PP_AUTOSIZE_FIT if autosize else PP_AUTOSIZE_NONE
+            applied["autosize"] = bool(autosize)
+        if word_wrap is not None:
+            frame.WordWrap = MSO_TRUE if word_wrap else MSO_FALSE
+            applied["word_wrap"] = bool(word_wrap)
+        if margin is not None:
+            for side in ("MarginLeft", "MarginRight", "MarginTop", "MarginBottom"):
+                setattr(frame, side, float(margin))
+            applied["margin"] = float(margin)
+
+        if not applied:
+            raise InvalidReferenceError("Nie podano zadnego pola do zmiany")
+
+        self._goto_slide(int(slide_index))
+        return {
+            "slide_index": int(slide_index),
+            "shape_id": int(shape.Id),
+            "paragraph": int(paragraph) if paragraph is not None else "all",
+            "applied": applied,
+        }
+
+    @action("format_chart")
+    def format_chart(
+        self,
+        slide_index: int,
+        shape_id: Any,
+        series_colors: list[Any] | None = None,
+        text_color: Any = None,
+        background: Any = None,
+        legend: Any = None,
+        data_labels: bool | None = None,
+        gridlines: bool | None = None,
+        title: str | None = None,
+    ) -> dict[str, Any]:
+        """Dostraja wykres do kolorystyki slajdu.
+
+        ``background="none"`` robi tlo wykresu przezroczyste, ``legend`` przyjmuje
+        ``False`` albo pozycje (``bottom``, ``top``, ``left``, ``right``),
+        ``text_color`` farbuje osie, legende i tytul naraz.
+        """
+        slide = self.slide(slide_index)
+        shape = self._resolve_shape(slide, shape_id)
+
+        if not shape.HasChart:
+            raise InvalidReferenceError(
+                f"Ksztalt {shape_id!r} nie jest wykresem - uzyj ppt_add_chart"
+            )
+
+        chart = shape.Chart
+        applied: dict[str, Any] = {}
+
+        if series_colors:
+            count = int(chart.SeriesCollection().Count)
+            for position, color in enumerate(series_colors, start=1):
+                if position > count:
+                    break
+                series = chart.SeriesCollection(position)
+                series.Format.Fill.Visible = MSO_TRUE
+                series.Format.Fill.Solid()
+                series.Format.Fill.ForeColor.RGB = parse_color(color)
+            applied["series_colored"] = min(len(series_colors), count)
+
+        if background is not None:
+            if str(background).strip().lower() == "none":
+                chart.ChartArea.Format.Fill.Visible = MSO_FALSE
+                chart.ChartArea.Format.Line.Visible = MSO_FALSE
+                with_plot_area = True
+            else:
+                chart.ChartArea.Format.Fill.Solid()
+                chart.ChartArea.Format.Fill.ForeColor.RGB = parse_color(background)
+                with_plot_area = False
+            if with_plot_area:
+                try:
+                    chart.PlotArea.Format.Fill.Visible = MSO_FALSE
+                except com_error:
+                    pass
+            applied["background"] = str(background)
+
+        if title is not None:
+            chart.HasTitle = MSO_TRUE
+            chart.ChartTitle.Text = str(title)
+            applied["title"] = str(title)
+
+        if legend is not None:
+            if legend is False or str(legend).strip().lower() in ("none", "false"):
+                chart.HasLegend = MSO_FALSE
+                applied["legend"] = False
+            else:
+                chart.HasLegend = MSO_TRUE
+                if legend is not True:
+                    chart.Legend.Position = lookup_constant(
+                        legend, XL_LEGEND_POSITIONS, "legend"
+                    )
+                applied["legend"] = legend if legend is not True else "on"
+
+        if data_labels is not None:
+            count = int(chart.SeriesCollection().Count)
+            for position in range(1, count + 1):
+                chart.SeriesCollection(position).HasDataLabels = (
+                    MSO_TRUE if data_labels else MSO_FALSE
+                )
+            applied["data_labels"] = bool(data_labels)
+
+        if gridlines is not None:
+            try:
+                chart.Axes(XL_VALUE_AXIS).HasMajorGridlines = (
+                    MSO_TRUE if gridlines else MSO_FALSE
+                )
+                applied["gridlines"] = bool(gridlines)
+            except com_error:
+                applied["gridlines"] = None
+
+        if text_color is not None:
+            rgb = parse_color(text_color)
+            setters = [
+                lambda: setattr(chart.Axes(XL_CATEGORY_AXIS).TickLabels.Font, "Color", rgb),
+                lambda: setattr(chart.Axes(XL_VALUE_AXIS).TickLabels.Font, "Color", rgb),
+                lambda: setattr(chart.Legend.Font, "Color", rgb),
+                lambda: setattr(chart.ChartTitle.Font, "Color", rgb),
+            ]
+            # Etykiety danych maja wlasna czcionke - bez tego zostaja w kolorze
+            # motywu i odcinaja sie od reszty wykresu.
+            for position in range(1, int(chart.SeriesCollection().Count) + 1):
+                setters.append(
+                    lambda index=position: setattr(
+                        chart.SeriesCollection(index).DataLabels().Font, "Color", rgb
+                    )
+                )
+            for setter in setters:
+                try:
+                    setter()
+                except com_error:
+                    pass
+            applied["text_color"] = bgr_to_hex(rgb)
+
+        self._goto_slide(int(slide_index))
+        return {
+            "slide_index": int(slide_index),
+            "shape_id": int(shape.Id),
+            "applied": applied,
         }
 
     def _resolve_shape(self, slide: Any, shape_id: Any) -> Any:
@@ -1315,6 +1756,31 @@ class PowerPointController(BaseController):
             "advance_on_click": bool(advance_on_click),
             "advance_after": float(advance_after) if advance_after is not None else None,
         }
+
+
+def _paragraph_text(text: Any) -> str:
+    """Zamienia znaki nowej linii na separator akapitu PowerPointa.
+
+    COM traktuje ``\\n`` jako *miekki* lamacz wiersza wewnatrz jednego akapitu -
+    tekst wyglada wtedy jak kilka linii, ale ``Paragraphs().Count`` zwraca 1
+    i formatowanie akapitowe (odstepy, wyrownanie per akapit) nie ma czego
+    zlapac. Prawdziwym separatorem akapitu jest ``\\r``.
+    """
+    return str(text).replace("\r\n", "\r").replace("\n", "\r")
+
+
+def _unit_fraction(value: Any, label: str) -> float:
+    """Waliduje ulamek 0.0-1.0; przyjmuje tez procenty podane jako 0-100."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} musi byc liczba") from exc
+
+    if 1 < number <= 100:
+        number = number / 100
+    if not 0.0 <= number <= 1.0:
+        raise ValueError(f"{label} musi miescic sie w zakresie 0.0-1.0 (albo 0-100%)")
+    return number
 
 
 def _normalize_series(series_data: Any, expected_length: int) -> list[tuple[str, list[Any]]]:

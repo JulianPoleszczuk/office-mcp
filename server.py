@@ -596,6 +596,170 @@ def ppt_add_shape(
 
 
 @server.tool()
+def ppt_get_theme() -> dict[str, Any]:
+    """Zwraca palete kolorow i czcionki motywu prezentacji."""
+    return call_bridge("powerpoint", "get_theme", {})
+
+
+@server.tool()
+def ppt_set_theme_colors(colors: dict[str, str]) -> dict[str, Any]:
+    """Podmienia kolory w palecie motywu, np.
+    {"accent1": "#10A37F", "dark1": "#0B1014", "light1": "#ECF2F0"}.
+    Nazwy: dark1/text1, light1/background1, dark2, light2, accent1..accent6,
+    hyperlink, followed_hyperlink. Ustawiony raz motyw obowiazuje wszystkie
+    slajdy - nie trzeba powtarzac koloru przy kazdym ksztalcie."""
+    return call_bridge("powerpoint", "set_theme_colors", {"colors": colors})
+
+
+@server.tool()
+def ppt_set_theme_fonts(
+    major: str | None = None, minor: str | None = None
+) -> dict[str, Any]:
+    """Ustawia czcionki motywu: 'major' dla naglowkow, 'minor' dla tresci."""
+    return call_bridge(
+        "powerpoint", "set_theme_fonts", {"major": major, "minor": minor}
+    )
+
+
+@server.tool()
+def ppt_set_master_background(
+    color: str | None = None,
+    image_path: str | None = None,
+    apply_to_slides: bool = True,
+) -> dict[str, Any]:
+    """Ustawia tlo na wzorcu slajdow - raz dla calej prezentacji, zamiast
+    wolac ppt_set_background dla kazdego slajdu osobno."""
+    return call_bridge(
+        "powerpoint",
+        "set_master_background",
+        {
+            "color": color,
+            "image_path": image_path,
+            "apply_to_slides": apply_to_slides,
+        },
+    )
+
+
+@server.tool()
+def ppt_set_shape_format(
+    slide_index: int,
+    shape_id: Any,
+    fill_color: str | None = None,
+    fill_transparency: float | None = None,
+    gradient_from: str | None = None,
+    gradient_to: str | None = None,
+    gradient_style: str = "vertical",
+    line_color: str | None = None,
+    line_width: float | None = None,
+    line_dash: str | None = None,
+    shadow: bool | None = None,
+    shadow_color: str | None = None,
+    shadow_blur: float | None = None,
+    shadow_offset_x: float | None = None,
+    shadow_offset_y: float | None = None,
+    shadow_transparency: float | None = None,
+    corner_radius: float | None = None,
+) -> dict[str, Any]:
+    """Wyglad istniejacego ksztaltu. 'gradient_from' + 'gradient_to' wlaczaja
+    gradient dwukolorowy ('gradient_style': horizontal, vertical, diagonal_up,
+    diagonal_down, from_corner, from_center). Przezroczystosci 0.0-1.0.
+    'line_dash': solid, dash, round_dot, long_dash i pokrewne.
+    'corner_radius' 0.0-0.5 dziala na rounded_rectangle."""
+    return call_bridge(
+        "powerpoint",
+        "set_shape_format",
+        {
+            "slide_index": slide_index,
+            "shape_id": shape_id,
+            "fill_color": fill_color,
+            "fill_transparency": fill_transparency,
+            "gradient_from": gradient_from,
+            "gradient_to": gradient_to,
+            "gradient_style": gradient_style,
+            "line_color": line_color,
+            "line_width": line_width,
+            "line_dash": line_dash,
+            "shadow": shadow,
+            "shadow_color": shadow_color,
+            "shadow_blur": shadow_blur,
+            "shadow_offset_x": shadow_offset_x,
+            "shadow_offset_y": shadow_offset_y,
+            "shadow_transparency": shadow_transparency,
+            "corner_radius": corner_radius,
+        },
+    )
+
+
+@server.tool()
+def ppt_set_paragraph_format(
+    slide_index: int,
+    shape_id: Any,
+    paragraph: int | None = None,
+    line_spacing: float | None = None,
+    space_before: float | None = None,
+    space_after: float | None = None,
+    alignment: str | None = None,
+    vertical_anchor: str | None = None,
+    autosize: bool | None = None,
+    word_wrap: bool | None = None,
+    margin: float | None = None,
+) -> dict[str, Any]:
+    """Typografia akapitu: interlinia (wielokrotnosc, 1.0 = pojedyncza), odstepy
+    przed/po w punktach, wyrownanie (left/center/right/justify), kotwica pionowa
+    (top/middle/bottom), autodopasowanie ramki i marginesy wewnetrzne.
+    Bez 'paragraph' zmiana obejmuje caly tekst ksztaltu."""
+    return call_bridge(
+        "powerpoint",
+        "set_paragraph_format",
+        {
+            "slide_index": slide_index,
+            "shape_id": shape_id,
+            "paragraph": paragraph,
+            "line_spacing": line_spacing,
+            "space_before": space_before,
+            "space_after": space_after,
+            "alignment": alignment,
+            "vertical_anchor": vertical_anchor,
+            "autosize": autosize,
+            "word_wrap": word_wrap,
+            "margin": margin,
+        },
+    )
+
+
+@server.tool()
+def ppt_format_chart(
+    slide_index: int,
+    shape_id: Any,
+    series_colors: list[str] | None = None,
+    text_color: str | None = None,
+    background: str | None = None,
+    legend: Any = None,
+    data_labels: bool | None = None,
+    gridlines: bool | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Dostraja wykres do kolorystyki slajdu: kolory serii, kolor tekstu osi
+    i legendy, tlo ('none' = przezroczyste), pozycja legendy
+    (bottom/top/left/right albo False), etykiety danych, linie siatki, tytul."""
+    return call_bridge(
+        "powerpoint",
+        "format_chart",
+        {
+            "slide_index": slide_index,
+            "shape_id": shape_id,
+            "series_colors": series_colors,
+            "text_color": text_color,
+            "background": background,
+            "legend": legend,
+            "data_labels": data_labels,
+            "gridlines": gridlines,
+            "title": title,
+        },
+    )
+
+
+@server.tool()
 def ppt_delete_shape(slide_index: int, shape_id: Any) -> dict[str, Any]:
     """Usuwa ksztalt ze slajdu; 'shape_id' to id, nazwa ksztaltu albo skrot
     'title'/'content'."""

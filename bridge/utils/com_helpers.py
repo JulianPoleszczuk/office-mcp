@@ -243,6 +243,62 @@ PP_TRANSITIONS: dict[str, int] = {
     "morph_by_char": 3956,
 }
 
+MSO_THEME_COLORS: dict[str, int] = {
+    "dark1": 1,
+    "text1": 13,
+    "light1": 2,
+    "background1": 14,
+    "dark2": 3,
+    "text2": 15,
+    "light2": 4,
+    "background2": 16,
+    "accent1": 5,
+    "accent2": 6,
+    "accent3": 7,
+    "accent4": 8,
+    "accent5": 9,
+    "accent6": 10,
+    "hyperlink": 11,
+    "followed_hyperlink": 12,
+}
+
+MSO_GRADIENT_STYLES: dict[str, int] = {
+    "horizontal": 1,
+    "vertical": 2,
+    "diagonal_up": 3,
+    "diagonal_down": 4,
+    "from_corner": 5,
+    "from_title": 6,
+    "from_center": 7,
+}
+
+MSO_LINE_DASHES: dict[str, int] = {
+    "solid": 1,
+    "square_dot": 2,
+    "round_dot": 3,
+    "dash": 4,
+    "dash_dot": 5,
+    "dash_dot_dot": 6,
+    "long_dash": 7,
+    "long_dash_dot": 8,
+    "long_dash_dot_dot": 9,
+}
+
+MSO_ANCHORS: dict[str, int] = {
+    "top": 1,
+    "middle": 3,
+    "center": 3,
+    "bottom": 4,
+}
+
+XL_LEGEND_POSITIONS: dict[str, int] = {
+    "bottom": -4107,
+    "corner": 2,
+    "left": -4131,
+    "right": -4152,
+    "top": -4160,
+}
+
 PP_EXPORT_FILTERS: dict[str, str] = {
     ".png": "PNG",
     ".jpg": "JPG",
