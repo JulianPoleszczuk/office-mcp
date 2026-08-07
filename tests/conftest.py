@@ -1,8 +1,8 @@
-"""Wspolne narzedzia testowe: atrapa polaczenia COM i pomocnicze mocki.
+"""Shared test helpers: a fake COM connection and mock builders.
 
-Testy kontrolerow nie wymagaja zainstalowanego Office - obiekty COM sa
+Controller tests do not need Office installed - COM objects are replaced
 podmieniane na ``MagicMock``, a warstwa watkow/timeoutow na
-:class:`FakeConnection`, ktora wykonuje wywolania synchronicznie.
+:class:`FakeConnection`, which runs calls synchronously.
 """
 
 from __future__ import annotations
@@ -45,13 +45,13 @@ def com_collection(items: Sequence[Any]) -> MagicMock:
     return collection
 
 
-def make_com_error(hresult: int = -2147352567, description: str = "blad COM") -> Exception:
-    """Tworzy wyjatek COM o zadanym HRESULT i opisie z ``excepinfo``."""
+def make_com_error(hresult: int = -2147352567, description: str = "COM error") -> Exception:
+    """Builds a COM exception with the given HRESULT and ``excepinfo`` text."""
     return com_error(hresult, "Test", (0, "Office", description, None, 0, hresult), None)
 
 
 def make_text_frame(text: str = "", has_text: bool | None = None) -> MagicMock:
-    """Mock ``TextFrame`` z ustawionym tekstem i dzialajacym ``TextRange``."""
+    """Mock ``TextFrame`` with text set and a working ``TextRange``."""
     frame = MagicMock()
     frame.HasText = bool(text) if has_text is None else has_text
     frame.TextRange.Text = text
@@ -66,7 +66,7 @@ def make_shape(
     shape_type: int = 17,
     placeholder_type: int | None = None,
 ) -> MagicMock:
-    """Mock ksztaltu slajdu z najczesciej odpytywanymi wlasciwosciami."""
+    """Mock slide shape with the properties that get queried most often."""
     shape = MagicMock()
     shape.Id = shape_id
     shape.Name = name

@@ -12,7 +12,7 @@ from bridge.utils.errors import (
 from tests.conftest import FakeConnection, com_collection, make_com_error, make_shape
 
 
-def make_slide(shapes=None, has_title=True, title_text="Tytul"):
+def make_slide(shapes=None, has_title=True, title_text="Title"):
     slide = MagicMock()
     shape_list = list(shapes or [])
     title_shape = make_shape(shape_id=1, name="Title 1", text=title_text, placeholder_type=1)
@@ -41,7 +41,7 @@ def make_presentation(slides=None, path=r"C:\prezentacje\test.pptx", name="test.
 
 @pytest.fixture
 def powerpoint():
-    slides = [make_slide(shapes=[make_shape(shape_id=5, text="Punkt", placeholder_type=2)])]
+    slides = [make_slide(shapes=[make_shape(shape_id=5, text="Point", placeholder_type=2)])]
     presentation = make_presentation(slides=slides)
 
     app = MagicMock()
@@ -58,14 +58,14 @@ def powerpoint():
 class TestActivePresentationTracking:
     def test_open_pins_presentation_against_stale_active(self, powerpoint, tmp_path):
         controller, app, presentation, _slides = powerpoint
-        target = tmp_path / "wlasciwa.pptx"
+        target = tmp_path / "correct.pptx"
         target.write_bytes(b"x")
         presentation.FullName = str(target)
         presentation.Path = str(tmp_path)
 
-        # PowerPoint ignoruje Windows.Activate(), gdy nie jest na wierzchu -
-        # ActivePresentation dalej wskazuje zupelnie inny plik.
-        inna = make_presentation(path=r"C:\inna\inna.pptx", name="inna.pptx")
+        # PowerPoint ignores Windows.Activate() when it is not in front -
+        # ActivePresentation still points at a completely different file.
+        inna = make_presentation(path=r"C:\other\other.pptx", name="other.pptx")
         app.ActivePresentation = inna
         app.Presentations = com_collection([presentation, inna])
 
@@ -97,7 +97,7 @@ class TestTitleShortcut:
         box = make_shape(shape_id=77, name="TextBox 1")
         slides[0].Shapes.AddTextbox.return_value = box
 
-        result = controller.dispatch("set_title", {"slide_index": 1, "text": "Tytul"})
+        result = controller.dispatch("set_title", {"slide_index": 1, "text": "Title"})
 
         assert result["created_textbox"] is True
         assert box.Name == "office-mcp Title"
@@ -110,8 +110,8 @@ class TestTitleShortcut:
         sequence = slides[0].TimeLine.MainSequence
         sequence.Count = 1
 
-        # Wczesniej "title" dzialalo tylko przy prawdziwym placeholderze, wiec
-        # tytul wstawiony przez set_title byl niewidoczny dla reszty narzedzi.
+        # Previously "title" only worked with a real placeholder, so a title
+        # inserted by set_title was invisible to every other tool.
         controller.dispatch("add_animation", {"slide_index": 1, "shape_id": "title"})
 
         assert sequence.AddEffect.call_args.kwargs["Shape"] is box
@@ -121,7 +121,7 @@ class TestDispatch:
     def test_unknown_action_is_protocol_error(self, powerpoint):
         controller, *_ = powerpoint
         with pytest.raises(ProtocolError):
-            controller.dispatch("nie_ma_takiej_akcji", {})
+            controller.dispatch("no_such_action", {})
 
     def test_missing_required_param_is_protocol_error(self, powerpoint):
         controller, *_ = powerpoint
@@ -233,7 +233,7 @@ class TestFileOperations:
 
     def test_open_presentation_reuses_open_file(self, powerpoint, tmp_path):
         controller, app, presentation, _ = powerpoint
-        existing = tmp_path / "otwarta.pptx"
+        existing = tmp_path / "opened.pptx"
         existing.write_bytes(b"x")
         presentation.FullName = str(existing)
 
@@ -244,7 +244,7 @@ class TestFileOperations:
 
     def test_open_presentation_opens_new_file(self, powerpoint, tmp_path):
         controller, app, _presentation, _ = powerpoint
-        other = tmp_path / "inna.pptx"
+        other = tmp_path / "other.pptx"
         other.write_bytes(b"x")
 
         result = controller.dispatch("open_presentation", {"path": str(other)})
@@ -297,7 +297,7 @@ class TestInspection:
         result = controller.dispatch("list_slides", {})
 
         assert result["slide_count"] == 1
-        assert result["slides"][0]["title"] == "Tytul"
+        assert result["slides"][0]["title"] == "Title"
         assert result["slides"][0]["layout"] == "Tytul i zawartosc"
 
     def test_get_slide_content_lists_shapes_and_notes(self, powerpoint):
@@ -310,7 +310,7 @@ class TestInspection:
         result = controller.dispatch("get_slide_content", {"slide_index": 1})
 
         assert result["notes"] == "Notatka"
-        assert result["shapes"][0]["text"] == "Punkt"
+        assert result["shapes"][0]["text"] == "Point"
         assert result["shapes"][0]["shape_id"] == 5
 
     def test_slide_index_out_of_range(self, powerpoint):
@@ -338,10 +338,10 @@ class TestStructure:
         new_slide = make_slide()
         presentation.Slides.Add.return_value = new_slide
 
-        controller.dispatch("add_slide", {"layout": "blank", "index": 1, "title": "Wstep"})
+        controller.dispatch("add_slide", {"layout": "blank", "index": 1, "title": "Intro"})
 
         presentation.Slides.Add.assert_called_once_with(1, 12)
-        assert new_slide.Shapes.Title.TextFrame.TextRange.Text == "Wstep"
+        assert new_slide.Shapes.Title.TextFrame.TextRange.Text == "Intro"
 
     def test_add_slide_rejects_unknown_layout(self, powerpoint):
         controller, *_ = powerpoint
@@ -375,7 +375,7 @@ class TestContent:
         controller, _app, _presentation, slides = powerpoint
         slides[0].Shapes.HasTitle = False
 
-        result = controller.dispatch("set_title", {"slide_index": 1, "text": "Tytul"})
+        result = controller.dispatch("set_title", {"slide_index": 1, "text": "Title"})
 
         slides[0].Shapes.AddTextbox.assert_called_once()
         assert result["created_textbox"] is True
@@ -522,7 +522,7 @@ class TestFormatting:
 class TestVisuals:
     def test_add_image_keeps_aspect_ratio_without_size(self, powerpoint, tmp_path):
         controller, _app, _presentation, slides = powerpoint
-        image = tmp_path / "wykres.png"
+        image = tmp_path / "chart.png"
         image.write_bytes(b"png")
 
         controller.dispatch(
@@ -547,7 +547,7 @@ class TestVisuals:
         shape = make_shape(shape_id=11)
         slides[0].Shapes.AddChart2.return_value = shape
         worksheet = shape.Chart.ChartData.Workbook.Worksheets.return_value
-        worksheet.Name = "Arkusz1"
+        worksheet.Name = "Sheet1"
         worksheet.ListObjects.Count = 0
         worksheet.Range.return_value.Address.return_value = "$A$1:$B$3"
 
@@ -567,7 +567,7 @@ class TestVisuals:
         )
 
         slides[0].Shapes.AddChart2.assert_called_once_with(-1, 57, 50.0, 100.0, 400.0, 300.0)
-        shape.Chart.SetSourceData.assert_called_once_with("='Arkusz1'!$A$1:$B$3")
+        shape.Chart.SetSourceData.assert_called_once_with("='Sheet1'!$A$1:$B$3")
         assert result["series"] == ["Wyniki"]
         assert shape.Chart.ChartTitle.Text == "Wyniki"
 
@@ -616,7 +616,7 @@ class TestVisuals:
                 "slide_index": 1,
                 "rows": 2,
                 "cols": 2,
-                "data": [["Nazwa", "Wynik"], ["Robot", 12]],
+                "data": [["Name", "Result"], ["Robot", 12]],
                 "left": 0,
                 "top": 0,
                 "width": 400,
@@ -753,7 +753,7 @@ class TestErrorMapping:
                     "height": 10,
                 },
             )
-        assert "zajety" in info.value.message
+        assert "busy" in info.value.message
 
     def test_bad_index_maps_to_invalid_reference(self, powerpoint):
         controller, _app, _presentation, slides = powerpoint
@@ -766,15 +766,15 @@ class TestErrorMapping:
 class TestGrouping:
     def test_group_translates_ids_to_shape_indexes(self, powerpoint):
         controller, _app, _presentation, slides = powerpoint
-        second = make_shape(shape_id=6, name="Drugi")
+        second = make_shape(shape_id=6, name="Second")
         slides[0].Shapes = com_collection([slides[0].Shapes(1), second])
 
         controller.dispatch(
-            "group_shapes", {"slide_index": 1, "shape_ids": [5, 6], "name": "Karta"}
+            "group_shapes", {"slide_index": 1, "shape_ids": [5, 6], "name": "Card"}
         )
 
         slides[0].Shapes.Range.assert_called_once_with([1, 2])
-        assert slides[0].Shapes.Range.return_value.Group.return_value.Name == "Karta"
+        assert slides[0].Shapes.Range.return_value.Group.return_value.Name == "Card"
 
     def test_group_needs_two_shapes(self, powerpoint):
         controller, *_ = powerpoint
@@ -788,7 +788,7 @@ class TestGrouping:
 
     def test_ungroup_on_plain_shape_is_invalid_reference(self, powerpoint):
         controller, _app, _presentation, slides = powerpoint
-        slides[0].Shapes(1).Ungroup.side_effect = make_com_error(-2147024809, "nie grupa")
+        slides[0].Shapes(1).Ungroup.side_effect = make_com_error(-2147024809, "not a group")
 
         with pytest.raises(InvalidReferenceError):
             controller.dispatch("ungroup_shapes", {"slide_index": 1, "shape_id": 5})
@@ -826,7 +826,7 @@ class TestGrouping:
 
         with pytest.raises(InvalidReferenceError):
             controller.dispatch(
-                "align_shapes", {"slide_index": 1, "shape_ids": [5, 6], "align": "srodek"}
+                "align_shapes", {"slide_index": 1, "shape_ids": [5, 6], "align": "middle-ish"}
             )
 
     def test_distribute_needs_three_shapes(self, powerpoint):
@@ -869,7 +869,7 @@ class TestHyperlinks:
 
     def test_slide_target_builds_subaddress(self, powerpoint):
         controller, _app, presentation, slides = powerpoint
-        target = make_slide(title_text="Skala")
+        target = make_slide(title_text="Scale")
         target.SlideID = 261
         presentation.Slides = com_collection([slides[0], target])
 
@@ -878,7 +878,7 @@ class TestHyperlinks:
         )
 
         settings = slides[0].Shapes(1).ActionSettings.return_value
-        assert settings.Hyperlink.SubAddress == "261,2,Skala"
+        assert settings.Hyperlink.SubAddress == "261,2,Scale"
         assert result["target_slide"] == 2
 
     def test_url_and_slide_together_are_rejected(self, powerpoint):
@@ -919,14 +919,14 @@ class TestHeadersFooters:
 
         controller.dispatch(
             "set_headers_footers",
-            {"footer_text": "ukryta", "show_footer": False},
+            {"footer_text": "hidden", "show_footer": False},
         )
 
         assert slides[0].HeadersFooters.Footer.Visible == 0
 
     def test_footer_falls_back_to_master_on_blank_layout(self, powerpoint):
         controller, _app, presentation, slides = powerpoint
-        # Uklad "blank" nie ma placeholdera stopki - slajd odrzuca zapis tekstu.
+        # A "blank" layout has no footer placeholder - the slide rejects text.
         type(slides[0].HeadersFooters.Footer).Text = property(
             lambda _self: "", lambda _self, _value: (_ for _ in ()).throw(
                 make_com_error(-2147352567, "Invalid request")
@@ -962,10 +962,10 @@ class TestSections:
         presentation.SectionProperties.AddBeforeSlide.return_value = 1
 
         result = controller.dispatch(
-            "add_section", {"name": "Wstep", "before_slide": 1}
+            "add_section", {"name": "Intro", "before_slide": 1}
         )
 
-        presentation.SectionProperties.AddBeforeSlide.assert_called_once_with(1, "Wstep")
+        presentation.SectionProperties.AddBeforeSlide.assert_called_once_with(1, "Intro")
         assert result["section_index"] == 1
 
     def test_add_section_validates_slide(self, powerpoint):
@@ -976,7 +976,7 @@ class TestSections:
     def test_delete_section_keeps_slides_by_default(self, powerpoint):
         controller, _app, presentation, _slides = powerpoint
         presentation.SectionProperties.Count = 2
-        presentation.SectionProperties.Name.return_value = "Wstep"
+        presentation.SectionProperties.Name.return_value = "Intro"
 
         controller.dispatch("delete_section", {"section_index": 1})
 
@@ -996,14 +996,14 @@ class TestSections:
         controller, _app, presentation, _slides = powerpoint
         properties = presentation.SectionProperties
         properties.Count = 1
-        properties.Name.return_value = "Historia"
+        properties.Name.return_value = "History"
         properties.FirstSlide.return_value = 1
         properties.SlidesCount.return_value = 3
 
         result = controller.dispatch("list_sections", {})
 
         assert result["sections"] == [
-            {"index": 1, "name": "Historia", "first_slide": 1, "slides": 3}
+            {"index": 1, "name": "History", "first_slide": 1, "slides": 3}
         ]
 
 
@@ -1034,7 +1034,7 @@ class TestSlideshow:
     def test_unknown_command_is_rejected(self, powerpoint):
         controller, *_ = powerpoint
         with pytest.raises(InvalidReferenceError):
-            controller.dispatch("slideshow", {"command": "pauza"})
+            controller.dispatch("slideshow", {"command": "pause"})
 
 
 class TestSmartArtAndMedia:
@@ -1048,8 +1048,8 @@ class TestSmartArtAndMedia:
 
     def test_smartart_layout_matched_by_locale_independent_key(self, powerpoint):
         controller, app, _presentation, slides = powerpoint
-        # Polski Office zwraca zlokalizowana nazwe - klucz z URN jest wspolny.
-        layout = self._layout("Powtarzany proces łamany", "bProcess3")
+        # A localised Office returns a translated name - the URN key is shared.
+        layout = self._layout("Repeating Bending Process", "bProcess3")
         app.SmartArtLayouts = com_collection([layout])
         slides[0].Shapes.AddSmartArt.return_value.SmartArt.AllNodes.Count = 0
 
@@ -1058,7 +1058,7 @@ class TestSmartArtAndMedia:
             {
                 "slide_index": 1,
                 "layout": "bProcess3",
-                "items": ["Krok 1", {"text": "Szczegol", "level": 2}],
+                "items": ["Step 1", {"text": "Detail", "level": 2}],
                 "left": 0,
                 "top": 0,
                 "width": 400,
@@ -1068,14 +1068,14 @@ class TestSmartArtAndMedia:
 
         assert slides[0].Shapes.AddSmartArt.call_args[0][0] is layout
         assert result["nodes"] == 2
-        # Podwezel powstaje przez AddNode(below) na rodzicu, nie przez Demote()
+        # A child node comes from AddNode(below) on the parent, not Demote()
         root = slides[0].Shapes.AddSmartArt.return_value.SmartArt.AllNodes.Add.return_value
         root.AddNode.assert_called_once_with(5)
         root.Demote.assert_not_called()
 
     def test_smartart_layout_matched_by_localized_name(self, powerpoint):
         controller, app, _presentation, slides = powerpoint
-        layout = self._layout("Podstawowa lista blokowa", "default", "list")
+        layout = self._layout("Basic Block List", "default", "list")
         app.SmartArtLayouts = com_collection([layout])
         slides[0].Shapes.AddSmartArt.return_value.SmartArt.AllNodes.Count = 0
 
@@ -1083,7 +1083,7 @@ class TestSmartArtAndMedia:
             "add_smartart",
             {
                 "slide_index": 1,
-                "layout": "Podstawowa lista blokowa",
+                "layout": "Basic Block List",
                 "items": ["A"],
                 "left": 0,
                 "top": 0,
@@ -1098,8 +1098,8 @@ class TestSmartArtAndMedia:
         controller, app, _presentation, _slides = powerpoint
         app.SmartArtLayouts = com_collection(
             [
-                self._layout("Podstawowa lista blokowa", "default", "list"),
-                self._layout("Powtarzany proces łamany", "bProcess3", "process"),
+                self._layout("Basic Block List", "default", "list"),
+                self._layout("Repeating Bending Process", "bProcess3", "process"),
             ]
         )
 
@@ -1111,14 +1111,14 @@ class TestSmartArtAndMedia:
 
     def test_unknown_smartart_layout_is_rejected(self, powerpoint):
         controller, app, _presentation, _slides = powerpoint
-        app.SmartArtLayouts = com_collection([self._layout("Proces", "process1")])
+        app.SmartArtLayouts = com_collection([self._layout("Process", "process1")])
 
         with pytest.raises(InvalidReferenceError):
             controller.dispatch(
                 "add_smartart",
                 {
                     "slide_index": 1,
-                    "layout": "spirala czasu",
+                    "layout": "time spiral",
                     "items": ["A"],
                     "left": 0,
                     "top": 0,
@@ -1154,7 +1154,7 @@ class TestSmartArtAndMedia:
                 "add_media",
                 {
                     "slide_index": 1,
-                    "media_path": r"C:\nie\ma\filmu.mp4",
+                    "media_path": r"C:\no\such\movie.mp4",
                     "left": 0,
                     "top": 0,
                 },
@@ -1189,7 +1189,7 @@ class TestCopySlideTo:
         with pytest.raises(DocumentNotFoundError):
             controller.dispatch(
                 "copy_slide_to",
-                {"slide_index": 1, "target_path": r"C:\nie\ma\celu.pptx"},
+                {"slide_index": 1, "target_path": r"C:\no\such\target.pptx"},
             )
 
 
@@ -1601,14 +1601,14 @@ class TestShapeEditing:
         controller, *_ = powerpoint
         with pytest.raises(InvalidReferenceError):
             controller.dispatch(
-                "set_shape_order", {"slide_index": 1, "shape_id": 5, "order": "wyzej"}
+                "set_shape_order", {"slide_index": 1, "shape_id": 5, "order": "higher"}
             )
 
 
 class TestExport:
     def test_export_slide_derives_height_from_slide_ratio(self, powerpoint, tmp_path):
         controller, _app, _presentation, slides = powerpoint
-        target = tmp_path / "slajd.png"
+        target = tmp_path / "slide.png"
 
         result = controller.dispatch(
             "export_slide", {"slide_index": 1, "path": str(target)}
@@ -1620,7 +1620,7 @@ class TestExport:
 
     def test_export_slide_honours_explicit_width(self, powerpoint, tmp_path):
         controller, _app, _presentation, slides = powerpoint
-        target = tmp_path / "slajd.jpg"
+        target = tmp_path / "slide.jpg"
 
         controller.dispatch(
             "export_slide", {"slide_index": 1, "path": str(target), "width": 800}
@@ -1633,7 +1633,7 @@ class TestExport:
         with pytest.raises(InvalidReferenceError):
             controller.dispatch(
                 "export_slide",
-                {"slide_index": 1, "path": str(tmp_path / "slajd.svg")},
+                {"slide_index": 1, "path": str(tmp_path / "slide.svg")},
             )
 
     def test_export_pdf_saves_copy_without_repointing_presentation(
@@ -1661,7 +1661,7 @@ class TestExport:
         controller, *_ = powerpoint
         with pytest.raises(DocumentNotFoundError):
             controller.dispatch(
-                "export_pdf", {"path": r"C:\nie\ma\takiego\katalogu\deck.pdf"}
+                "export_pdf", {"path": r"C:\no\such\directory\deck.pdf"}
             )
 
 
@@ -1795,7 +1795,7 @@ class TestParagraphText:
             },
         )
 
-        # \n to w COM miekki lamacz wiersza - akapity rozdziela dopiero \r
+        # A newline is a soft break in COM - only a CR separates paragraphs
         assert shape.TextFrame.TextRange.Text == "Pierwszy\rDrugi\rTrzeci"
 
     def test_shape_text_is_normalized_too(self, powerpoint):
@@ -1827,7 +1827,7 @@ class TestParagraphText:
             "add_textbox",
             {
                 "slide_index": 1,
-                "text": "Bez lamania",
+                "text": "No breaks",
                 "left": 0,
                 "top": 0,
                 "width": 100,
@@ -1835,7 +1835,7 @@ class TestParagraphText:
             },
         )
 
-        assert shape.TextFrame.TextRange.Text == "Bez lamania"
+        assert shape.TextFrame.TextRange.Text == "No breaks"
 
 
 class TestSeriesNormalization:

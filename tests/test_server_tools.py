@@ -71,7 +71,7 @@ class TestCallBridge:
         assert result == {"ok": True, "result": {"slide_index": 2}}
 
     def test_bridge_error_is_passed_through(self, fake_client):
-        error = {"type": "ComConnectionError", "message": "PowerPoint nie odpowiada"}
+        error = {"type": "ComConnectionError", "message": "PowerPoint is not responding"}
         fake_client(response=Response(id="1", ok=False, error=error))
 
         result = server.call_bridge("powerpoint", "save", {})
@@ -87,7 +87,7 @@ class TestCallBridge:
         assert result["error"]["type"] == "BridgeUnavailable"
 
     def test_unexpected_exception_is_caught(self, fake_client):
-        fake_client(error=RuntimeError("cos poszlo nie tak"))
+        fake_client(error=RuntimeError("something went wrong"))
 
         result = server.call_bridge("word", "save", {})
 
@@ -107,7 +107,7 @@ class TestCallBridge:
         server.call_bridge(
             "excel",
             "set_cell",
-            {"sheet": "Arkusz1", "cell_ref": "A1", "value": None},
+            {"sheet": "Sheet1", "cell_ref": "A1", "value": None},
             keep_none=("value",),
         )
 

@@ -12,7 +12,7 @@ from bridge.utils.errors import (
 from tests.conftest import FakeConnection, com_collection, make_com_error
 
 
-def make_paragraph(text="Tekst", outline_level=10, style="Normalny", start=0, end=10):
+def make_paragraph(text="Text", outline_level=10, style="Normal", start=0, end=10):
     paragraph = MagicMock()
     paragraph.Range.Text = text
     paragraph.Range.Start = start
@@ -23,14 +23,14 @@ def make_paragraph(text="Tekst", outline_level=10, style="Normalny", start=0, en
 
 
 def style_property(reject_strings: bool = True):
-    """Property mock symulujacy Worda, ktory odrzuca angielskie nazwy stylow."""
+    """Property mock simulating a Word that rejects English style names."""
     stored: list = []
 
     def handler(*args):
         if args:
             value = args[0]
             if reject_strings and isinstance(value, str):
-                raise make_com_error(-2147352567, "Nie ma takiego stylu")
+                raise make_com_error(-2147352567, "No such style")
             stored.append(value)
             return None
         return stored[-1] if stored else None
@@ -38,7 +38,7 @@ def style_property(reject_strings: bool = True):
     return PropertyMock(side_effect=handler), stored
 
 
-def make_document(paragraphs=None, path=r"C:\dokumenty\raport.docx", name="raport.docx"):
+def make_document(paragraphs=None, path=r"C:\documents\raport.docx", name="report.docx"):
     document = MagicMock()
     paragraph_list = list(paragraphs or [make_paragraph()])
     document.Paragraphs = com_collection(paragraph_list)
@@ -46,7 +46,7 @@ def make_document(paragraphs=None, path=r"C:\dokumenty\raport.docx", name="rapor
     document.Path = path.rsplit("\\", 1)[0] if path else ""
     document.FullName = path or ""
     document.Saved = True
-    document.Content.Text = "Tekst dokumentu\r"
+    document.Content.Text = "Document text\r"
     document.Sections = com_collection([MagicMock()])
     document.ComputeStatistics.side_effect = lambda statistic: {
         0: 120,
@@ -57,11 +57,11 @@ def make_document(paragraphs=None, path=r"C:\dokumenty\raport.docx", name="rapor
 
 
 def growing_paragraphs(document):
-    """Atrapa kolekcji akapitow, ktora rosnie tak jak w prawdziwym Wordzie.
+    """Mock paragraph collection that grows the way real Word does.
 
-    Statyczna kolekcja nie wykrylaby bledu, przez ktory zakres listy obejmowal
-    tylko ostatnia pozycje - przy niezmiennym ``Count`` pierwszy i ostatni
-    indeks sa tym samym akapitem.
+    A static collection would not catch the bug where the list range covered
+    only the last entry - with a fixed ``Count`` the first and last index are
+    the same paragraph.
     """
     items = [make_paragraph("\r", start=0, end=1)]
 
@@ -107,7 +107,7 @@ class TestFileOperations:
 
     def test_create_document_uses_docx_format(self, word, tmp_path):
         controller, app, document = word
-        target = tmp_path / "notatka.docx"
+        target = tmp_path / "note.docx"
 
         controller.dispatch("create_document", {"path": str(target)})
 
@@ -116,12 +116,12 @@ class TestFileOperations:
 
     def test_create_document_with_template(self, word, tmp_path):
         controller, app, _ = word
-        template = tmp_path / "firmowy.dotx"
+        template = tmp_path / "company.dotx"
         template.write_bytes(b"x")
 
         controller.dispatch(
             "create_document",
-            {"path": str(tmp_path / "pismo.docx"), "template": str(template)},
+            {"path": str(tmp_path / "letter.docx"), "template": str(template)},
         )
 
         assert app.Documents.Add.call_args.kwargs["Template"] == str(template)
@@ -131,12 +131,12 @@ class TestFileOperations:
         with pytest.raises(DocumentNotFoundError):
             controller.dispatch(
                 "create_document",
-                {"path": str(tmp_path / "a.docx"), "template": str(tmp_path / "brak.dotx")},
+                {"path": str(tmp_path / "a.docx"), "template": str(tmp_path / "missing.dotx")},
             )
 
     def test_open_document_reuses_open_file(self, word, tmp_path):
         controller, app, document = word
-        existing = tmp_path / "raport.docx"
+        existing = tmp_path / "report.docx"
         existing.write_bytes(b"x")
         document.FullName = str(existing)
 
@@ -147,7 +147,7 @@ class TestFileOperations:
 
     def test_open_document_opens_new_file(self, word, tmp_path):
         controller, app, _ = word
-        other = tmp_path / "umowa.docx"
+        other = tmp_path / "contract.docx"
         other.write_bytes(b"x")
 
         result = controller.dispatch("open_document", {"path": str(other)})
@@ -192,9 +192,9 @@ class TestInspection:
         controller, _app, document = word
         document.Paragraphs = com_collection(
             [
-                make_paragraph("Rozdzial 1\r", outline_level=1, style="Naglowek 1"),
-                make_paragraph("Tresc\r", outline_level=10),
-                make_paragraph("Podrozdzial\r", outline_level=2, style="Naglowek 2"),
+                make_paragraph("Chapter 1\r", outline_level=1, style="Heading 1"),
+                make_paragraph("Body\r", outline_level=10),
+                make_paragraph("Subsection\r", outline_level=2, style="Naglowek 2"),
                 make_paragraph("   \r", outline_level=1),
             ]
         )
@@ -205,8 +205,8 @@ class TestInspection:
         assert result["headings"][0] == {
             "paragraph_index": 1,
             "level": 1,
-            "text": "Rozdzial 1",
-            "style": "Naglowek 1",
+            "text": "Chapter 1",
+            "style": "Heading 1",
         }
         assert result["headings"][1]["level"] == 2
 
@@ -216,32 +216,32 @@ class TestContent:
         controller, _app, document = word
         document.Paragraphs = com_collection([make_paragraph("\r")])
 
-        controller.dispatch("add_paragraph", {"text": "Wstep"})
+        controller.dispatch("add_paragraph", {"text": "Intro"})
 
         document.Content.InsertParagraphAfter.assert_not_called()
-        document.Content.InsertAfter.assert_called_once_with("Wstep")
+        document.Content.InsertAfter.assert_called_once_with("Intro")
 
     def test_add_paragraph_starts_new_one_after_filled_paragraph(self, word):
         controller, _app, document = word
 
-        controller.dispatch("add_paragraph", {"text": "Kolejny akapit"})
+        controller.dispatch("add_paragraph", {"text": "Another paragraph"})
 
         document.Content.Collapse.assert_called_once_with(0)
         document.Content.InsertParagraphAfter.assert_called_once()
-        document.Content.InsertAfter.assert_called_once_with("Kolejny akapit")
+        document.Content.InsertAfter.assert_called_once_with("Another paragraph")
 
     def test_add_paragraph_keeps_paragraph_mark(self, word):
         controller, _app, document = word
 
         controller.dispatch("add_paragraph", {"text": "Tresc"})
 
-        assert document.Paragraphs(1).Range.Text == "Tekst"
+        assert document.Paragraphs(1).Range.Text == "Text"
 
     def test_add_paragraph_applies_style(self, word):
         controller, _app, document = word
 
         result = controller.dispatch(
-            "add_paragraph", {"text": "Cytat", "style": "Quote"}
+            "add_paragraph", {"text": "Quote", "style": "Quote"}
         )
 
         assert document.Paragraphs(1).Range.Style == "Quote"
@@ -250,7 +250,7 @@ class TestContent:
     def test_add_heading_uses_heading_style(self, word):
         controller, _app, document = word
 
-        result = controller.dispatch("add_heading", {"text": "Wstep", "level": 2})
+        result = controller.dispatch("add_heading", {"text": "Intro", "level": 2})
 
         assert document.Paragraphs(1).Range.Style == "Heading 2"
         assert result["level"] == 2
@@ -296,7 +296,7 @@ class TestContent:
 
     def test_find_replace_without_hits(self, word):
         controller, _app, document = word
-        document.Content.Text = "Nic tu nie ma"
+        document.Content.Text = "Nothing here"
         document.Content.Find.Execute.return_value = False
 
         result = controller.dispatch(
@@ -316,11 +316,11 @@ class TestContent:
 
         result = controller.dispatch(
             "add_bullet_list",
-            {"items": ["Pierwszy", {"text": "Zagniezdzony", "level": 2}]},
+            {"items": ["First", {"text": "Nested", "level": 2}]},
         )
 
         assert document.Content.InsertAfter.call_count == 2
-        # Zakres obejmuje obie pozycje - nie tylko ostatnia.
+        # The range covers both entries - not only the last one.
         document.Range.assert_called_once_with(items[0].Range.Start, items[-1].Range.End)
         assert items[1].Range.ListFormat.ListLevelNumber == 2
         assert result["items"] == 2
@@ -463,7 +463,7 @@ class TestObjects:
 
         result = controller.dispatch(
             "insert_table",
-            {"rows": 2, "cols": 2, "data": [["Nazwa", "Ilosc"], ["Sruba", 4]]},
+            {"rows": 2, "cols": 2, "data": [["Name", "Quantity"], ["Screw", 4]]},
         )
 
         table = document.Tables.Add.return_value
@@ -612,15 +612,15 @@ class TestImageAndCaption:
 
     def test_builtin_caption_label_uses_constant(self, word):
         controller, app, document = word
-        document.Paragraphs = com_collection([make_paragraph("Obraz\r")])
+        document.Paragraphs = com_collection([make_paragraph("Image\r")])
 
         result = controller.dispatch(
-            "add_caption", {"paragraph_index": 1, "text": "Wykres", "label": "figure"}
+            "add_caption", {"paragraph_index": 1, "text": "Chart", "label": "figure"}
         )
 
         kwargs = document.Paragraphs(1).Range.InsertCaption.call_args.kwargs
         assert kwargs["Label"] == -1  # wdCaptionFigure
-        assert kwargs["Title"] == ": Wykres"
+        assert kwargs["Title"] == ": Chart"
         assert result["label_name"] == -1
         app.CaptionLabels.Add.assert_not_called()
 
@@ -629,26 +629,26 @@ class TestImageAndCaption:
         builtin = MagicMock()
         builtin.Name = "Figure"
         app.CaptionLabels = com_collection([builtin])
-        document.Paragraphs = com_collection([make_paragraph("Obraz\r")])
+        document.Paragraphs = com_collection([make_paragraph("Image\r")])
 
         controller.dispatch(
-            "add_caption", {"paragraph_index": 1, "text": "Wykres", "label": "Rysunek"}
+            "add_caption", {"paragraph_index": 1, "text": "Chart", "label": "Diagram"}
         )
 
-        # Wlasna etykieta musi trafic do slownika Worda, inaczej InsertCaption
-        # jej nie rozpozna.
-        app.CaptionLabels.Add.assert_called_once_with("Rysunek")
-        assert document.Paragraphs(1).Range.InsertCaption.call_args.kwargs["Label"] == "Rysunek"
+        # A custom label must land in Word's label list, otherwise InsertCaption
+        # would not recognise it.
+        app.CaptionLabels.Add.assert_called_once_with("Diagram")
+        assert document.Paragraphs(1).Range.InsertCaption.call_args.kwargs["Label"] == "Diagram"
 
     def test_known_custom_label_is_not_added_twice(self, word):
         controller, app, document = word
         existing = MagicMock()
-        existing.Name = "Rysunek"
+        existing.Name = "Diagram"
         app.CaptionLabels = com_collection([existing])
-        document.Paragraphs = com_collection([make_paragraph("Obraz\r")])
+        document.Paragraphs = com_collection([make_paragraph("Image\r")])
 
         controller.dispatch(
-            "add_caption", {"paragraph_index": 1, "text": "Wykres", "label": "Rysunek"}
+            "add_caption", {"paragraph_index": 1, "text": "Chart", "label": "Diagram"}
         )
 
         app.CaptionLabels.Add.assert_not_called()
@@ -659,13 +659,13 @@ class TestImageAndCaption:
 
         controller.dispatch("insert_image", {"image_path": __file__, "width": 200})
 
-        # Bez wlasnego akapitu obraz sklejalby sie z ostatnim zdaniem.
+        # Without its own paragraph the image would stick to the last sentence.
         document.Content.InsertAfter.assert_called_once_with("")
 
     def test_caption_above_uses_position_zero(self, word):
         controller, app, document = word
-        app.CaptionLabels.return_value.Name = "Tabela"
-        document.Paragraphs = com_collection([make_paragraph("Tabela\r")])
+        app.CaptionLabels.return_value.Name = "Table"
+        document.Paragraphs = com_collection([make_paragraph("Table\r")])
 
         controller.dispatch(
             "add_caption",
@@ -682,7 +682,7 @@ class TestListRange:
 
         controller.dispatch("add_numbered_list", {"items": ["A", "B", "C"]})
 
-        # Zakres musi obejmowac pierwsza i ostatnia pozycje, nie tylko ostatnia.
+        # The range must cover the first and last entry, not only the last.
         first, last = items[0], items[-1]
         assert document.Range.call_args[0] == (first.Range.Start, last.Range.End)
         assert len(items) == 3
@@ -704,7 +704,7 @@ class TestListRange:
             "add_numbered_list", {"items": ["A", {"text": "B", "level": 2}]}
         )
 
-        # Listy domyslne sa jednopoziomowe - zejscie nizej wymaga szablonu.
+        # Default lists are single-level - going deeper needs a template.
         document.Range.return_value.ListFormat.ApplyNumberDefault.assert_not_called()
         assert app.ListGalleries.call_args[0][0] == 3  # wdOutlineNumberGallery
         assert items[1].Range.ListFormat.ListLevelNumber == 2
@@ -733,13 +733,13 @@ class TestParagraphEditing:
     def test_delete_paragraph_returns_removed_text(self, word):
         controller, _app, document = word
         document.Paragraphs = com_collection(
-            [make_paragraph("Pierwszy\r"), make_paragraph("Drugi\r")]
+            [make_paragraph("First\r"), make_paragraph("Second\r")]
         )
 
         result = controller.dispatch("delete_paragraph", {"paragraph_index": 1})
 
         assert result["deleted"] == 1
-        assert result["texts"] == ["Pierwszy"]
+        assert result["texts"] == ["First"]
 
     def test_delete_paragraph_out_of_range(self, word):
         controller, *_ = word
@@ -748,11 +748,11 @@ class TestParagraphEditing:
 
     def test_insert_paragraph_before_given_index(self, word):
         controller, _app, document = word
-        first = make_paragraph("Pierwszy\r")
-        document.Paragraphs = com_collection([first, make_paragraph("Drugi\r")])
+        first = make_paragraph("First\r")
+        document.Paragraphs = com_collection([first, make_paragraph("Second\r")])
 
         result = controller.dispatch(
-            "insert_paragraph", {"text": "Nowy", "paragraph_index": 1}
+            "insert_paragraph", {"text": "New", "paragraph_index": 1}
         )
 
         first.Range.InsertParagraphBefore.assert_called_once()
@@ -760,12 +760,12 @@ class TestParagraphEditing:
 
     def test_insert_paragraph_after_given_index(self, word):
         controller, _app, document = word
-        first = make_paragraph("Pierwszy\r")
-        document.Paragraphs = com_collection([first, make_paragraph("Drugi\r")])
+        first = make_paragraph("First\r")
+        document.Paragraphs = com_collection([first, make_paragraph("Second\r")])
 
         result = controller.dispatch(
             "insert_paragraph",
-            {"text": "Nowy", "paragraph_index": 1, "after": True},
+            {"text": "New", "paragraph_index": 1, "after": True},
         )
 
         first.Range.InsertParagraphAfter.assert_called_once()
@@ -774,13 +774,13 @@ class TestParagraphEditing:
     def test_get_paragraph_reads_style_and_text(self, word):
         controller, _app, document = word
         document.Paragraphs = com_collection(
-            [make_paragraph("Tytul\r\x07", style="Nagłówek 1", outline_level=1)]
+            [make_paragraph("Title\r\x07", style="Heading 1", outline_level=1)]
         )
 
         result = controller.dispatch("get_paragraph", {"paragraph_index": 1})
 
-        assert result["paragraphs"][0]["text"] == "Tytul"
-        assert result["paragraphs"][0]["style"] == "Nagłówek 1"
+        assert result["paragraphs"][0]["text"] == "Title"
+        assert result["paragraphs"][0]["style"] == "Heading 1"
         assert result["paragraphs"][0]["outline_level"] == 1
 
     def test_get_paragraph_clamps_count_to_document(self, word):
@@ -799,7 +799,7 @@ class TestParagraphEditing:
 class TestWordExtras:
     def test_export_pdf_uses_fixed_format(self, word, tmp_path):
         controller, _app, document = word
-        target = tmp_path / "raport.pdf"
+        target = tmp_path / "report.pdf"
 
         result = controller.dispatch("export_pdf", {"path": str(target)})
 
@@ -819,21 +819,21 @@ class TestWordExtras:
 
     def test_footnote_anchors_before_paragraph_mark(self, word):
         controller, _app, document = word
-        paragraph = make_paragraph("Tekst akapitu\r", start=100, end=115)
+        paragraph = make_paragraph("Paragraph text\r", start=100, end=115)
         document.Paragraphs = com_collection([paragraph])
 
         controller.dispatch(
-            "add_footnote", {"paragraph_index": 1, "text": "Przypis"}
+            "add_footnote", {"paragraph_index": 1, "text": "Footnote"}
         )
 
-        # Collapse(wdCollapseEnd) wyladowalby na 115, czyli juz w nastepnym
-        # akapicie - odnosnik pojawilby sie przed jego pierwszym slowem.
+        # Collapse(wdCollapseEnd) would land on 115, i.e. already in the next
+        # paragraph - the mark would appear before its first word.
         paragraph.Range.SetRange.assert_called_once_with(114, 114)
-        assert document.Footnotes.Add.call_args.kwargs["Text"] == "Przypis"
+        assert document.Footnotes.Add.call_args.kwargs["Text"] == "Footnote"
 
     def test_hyperlink_in_paragraph_anchors_before_mark(self, word):
         controller, _app, document = word
-        paragraph = make_paragraph("Tekst\r", start=10, end=17)
+        paragraph = make_paragraph("Text\r", start=10, end=17)
         document.Paragraphs = com_collection([paragraph])
 
         controller.dispatch(
@@ -857,7 +857,7 @@ class TestWordExtras:
     def test_unknown_section_break_is_rejected(self, word):
         controller, *_ = word
         with pytest.raises(InvalidReferenceError):
-            controller.dispatch("insert_section_break", {"break_type": "nowa_kartka"})
+            controller.dispatch("insert_section_break", {"break_type": "new_sheet"})
 
     def test_set_default_font_writes_normal_style(self, word):
         controller, _app, document = word
@@ -879,7 +879,7 @@ class TestWordExtras:
 
         controller.dispatch("format_table", {"table_index": 1, "style": "light_grid"})
 
-        # Nazwy wbudowanych stylow tabel Word tlumaczy - idzie stala, nie tekst
+        # Word translates built-in table style names - a constant goes in
         assert table.Style == -161
 
     def test_format_table_without_tables_is_rejected(self, word):

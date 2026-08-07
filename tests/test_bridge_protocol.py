@@ -68,12 +68,12 @@ class TestResponse:
         assert decoded.error is None
 
     def test_failure_from_bridge_error(self):
-        resp = Response.failure("abc", ComConnectionError("PowerPoint nie odpowiada"))
+        resp = Response.failure("abc", ComConnectionError("PowerPoint is not responding"))
         payload = json.loads(resp.encode().decode("utf-8"))
 
         assert payload["ok"] is False
         assert payload["error"]["type"] == "ComConnectionError"
-        assert payload["error"]["message"] == "PowerPoint nie odpowiada"
+        assert payload["error"]["message"] == "PowerPoint is not responding"
 
     def test_failure_from_plain_exception(self):
         resp = Response.failure("abc", ValueError("zly argument"))
@@ -93,7 +93,7 @@ class TestLineCodec:
         assert encode_line({"a": 1}).endswith(b"\n")
 
     def test_encode_keeps_unicode(self):
-        assert "Wstęp" in encode_line({"title": "Wstęp"}).decode("utf-8")
+        assert "Intro" in encode_line({"title": "Intro"}).decode("utf-8")
 
     def test_encode_falls_back_to_str_for_unknown_types(self):
         payload = json.loads(encode_line({"v": {1, 2}}).decode("utf-8"))
@@ -187,7 +187,7 @@ class TestTransportIntegration:
 
     def test_error_travels_as_structured_payload(self, echo_server):
         def handler(_request):
-            raise ComConnectionError("Word nie odpowiada")
+            raise ComConnectionError("Word is not responding")
 
         server = echo_server(handler)
 
@@ -205,7 +205,7 @@ class TestTransportIntegration:
 
         with socket.create_connection(("127.0.0.1", server.port), timeout=5) as sock:
             stream = sock.makefile("rwb")
-            stream.write(b"to nie jest json\n")
+            stream.write(b"this is not json\n")
             stream.flush()
             broken = Response.decode(stream.readline())
 
@@ -219,18 +219,18 @@ class TestTransportIntegration:
 
 
 class _FakeController:
-    """Kontroler bez COM - sprawdza sama sciezke zadanie -> odpowiedz w Bridge."""
+    """A COM-free controller - exercises the request -> reply path in the Bridge."""
 
     def __init__(self, connection):
         self.connection = connection
 
     def dispatch(self, action_name, params):
         if action_name == "com_down":
-            raise ComConnectionError("Excel nie odpowiada")
+            raise ComConnectionError("Excel is not responding")
         if action_name == "boom":
-            raise RuntimeError("nieoczekiwany blad kontrolera")
-        if action_name == "nieznana":
-            raise ProtocolError("Nieznana akcja 'nieznana'")
+            raise RuntimeError("unexpected controller error")
+        if action_name == "unknown":
+            raise ProtocolError("Unknown action 'unknown'")
         return {"action": action_name, "params": params}
 
 
@@ -276,7 +276,7 @@ class TestBridgeServer:
 
         assert response.ok is False
         assert response.error["type"] == "ComConnectionError"
-        assert "nie odpowiada" in response.error["message"]
+        assert "not responding" in response.error["message"]
 
     def test_unexpected_exception_does_not_crash_bridge(self, bridge_server):
         failed = send(bridge_server, Request(app="word", action="boom"))
@@ -287,7 +287,7 @@ class TestBridgeServer:
         assert recovered.ok is True
 
     def test_unknown_action_is_reported_as_protocol_error(self, bridge_server):
-        response = send(bridge_server, Request(app="powerpoint", action="nieznana"))
+        response = send(bridge_server, Request(app="powerpoint", action="unknown"))
 
         assert response.ok is False
         assert response.error["type"] == "ProtocolError"

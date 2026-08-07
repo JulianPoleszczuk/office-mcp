@@ -18,7 +18,7 @@ from bridge.utils.errors import (
 from tests.conftest import FakeConnection, com_collection, make_com_error
 
 
-def make_worksheet(name="Arkusz1", values=((1, 2), (3, 4))):
+def make_worksheet(name="Sheet1", values=((1, 2), (3, 4))):
     worksheet = MagicMock()
     worksheet.Name = name
     worksheet.Index = 1
@@ -45,7 +45,7 @@ def make_worksheet(name="Arkusz1", values=((1, 2), (3, 4))):
     return worksheet
 
 
-def make_workbook(sheets=None, path=r"C:\dane\budzet.xlsx", name="budzet.xlsx"):
+def make_workbook(sheets=None, path=r"C:\data\budget.xlsx", name="budget.xlsx"):
     workbook = MagicMock()
     sheet_list = list(sheets or [make_worksheet()])
     workbook.Worksheets = com_collection(sheet_list)
@@ -60,7 +60,7 @@ def make_workbook(sheets=None, path=r"C:\dane\budzet.xlsx", name="budzet.xlsx"):
 
 @pytest.fixture
 def excel():
-    worksheet = make_worksheet("Budzet")
+    worksheet = make_worksheet("Budget")
     workbook = make_workbook(sheets=[worksheet])
 
     app = MagicMock()
@@ -76,17 +76,17 @@ def excel():
 class TestSheetResolution:
     def test_lookup_by_name_is_case_insensitive(self, excel):
         controller, *_ = excel
-        assert controller.worksheet("budzet").Name == "Budzet"
+        assert controller.worksheet("budget").Name == "Budget"
 
     def test_lookup_by_index(self, excel):
         controller, *_ = excel
-        assert controller.worksheet(1).Name == "Budzet"
+        assert controller.worksheet(1).Name == "Budget"
 
     def test_unknown_sheet_lists_available(self, excel):
         controller, *_ = excel
         with pytest.raises(InvalidReferenceError) as info:
-            controller.worksheet("Koszty")
-        assert "Budzet" in info.value.message
+            controller.worksheet("Costs")
+        assert "Budget" in info.value.message
 
     def test_index_out_of_range(self, excel):
         controller, *_ = excel
@@ -103,7 +103,7 @@ class TestSheetResolution:
 class TestFileOperations:
     def test_create_workbook_uses_xlsx_format(self, excel, tmp_path):
         controller, app, workbook, _ = excel
-        target = tmp_path / "nowy.xlsx"
+        target = tmp_path / "new.xlsx"
 
         controller.dispatch("create_workbook", {"path": str(target)})
 
@@ -112,12 +112,12 @@ class TestFileOperations:
 
     def test_create_workbook_respects_extension(self, excel, tmp_path):
         controller, _app, workbook, _ = excel
-        controller.dispatch("create_workbook", {"path": str(tmp_path / "dane.csv")})
+        controller.dispatch("create_workbook", {"path": str(tmp_path / "data.csv")})
         assert workbook.SaveAs.call_args[0][1] == 6
 
     def test_open_workbook_reuses_open_file(self, excel, tmp_path):
         controller, app, workbook, _ = excel
-        existing = tmp_path / "budzet.xlsx"
+        existing = tmp_path / "budget.xlsx"
         existing.write_bytes(b"x")
         workbook.FullName = str(existing)
 
@@ -129,11 +129,11 @@ class TestFileOperations:
     def test_open_workbook_missing_file(self, excel, tmp_path):
         controller, *_ = excel
         with pytest.raises(DocumentNotFoundError):
-            controller.dispatch("open_workbook", {"path": str(tmp_path / "brak.xlsx")})
+            controller.dispatch("open_workbook", {"path": str(tmp_path / "missing.xlsx")})
 
     def test_save_as_new_path(self, excel, tmp_path):
         controller, _app, workbook, _ = excel
-        controller.dispatch("save", {"path": str(tmp_path / "kopia.xlsx")})
+        controller.dispatch("save", {"path": str(tmp_path / "copy.xlsx")})
         workbook.SaveAs.assert_called_once()
 
     def test_save_without_file_requires_path(self, excel):
@@ -152,61 +152,61 @@ class TestFileOperations:
 class TestSheets:
     def test_add_sheet_appends_at_end(self, excel):
         controller, _app, workbook, _ = excel
-        new_sheet = make_worksheet("Nowy")
+        new_sheet = make_worksheet("New")
         workbook.Worksheets.Add.return_value = new_sheet
 
-        result = controller.dispatch("add_sheet", {"name": "Nowy"})
+        result = controller.dispatch("add_sheet", {"name": "New"})
 
-        assert new_sheet.Name == "Nowy"
+        assert new_sheet.Name == "New"
         assert result["sheet_count"] == 1
         assert "After" in workbook.Worksheets.Add.call_args.kwargs
 
     def test_add_sheet_with_index_inserts_before(self, excel):
         controller, _app, workbook, _ = excel
-        workbook.Worksheets.Add.return_value = make_worksheet("Nowy")
+        workbook.Worksheets.Add.return_value = make_worksheet("New")
 
-        controller.dispatch("add_sheet", {"name": "Nowy", "index": 1})
+        controller.dispatch("add_sheet", {"name": "New", "index": 1})
 
         assert "Before" in workbook.Worksheets.Add.call_args.kwargs
 
     def test_add_sheet_rejects_duplicate_name(self, excel):
         controller, *_ = excel
         with pytest.raises(InvalidReferenceError):
-            controller.dispatch("add_sheet", {"name": "budzet"})
+            controller.dispatch("add_sheet", {"name": "budget"})
 
     def test_delete_last_sheet_is_rejected(self, excel):
         controller, *_ = excel
         with pytest.raises(InvalidReferenceError):
-            controller.dispatch("delete_sheet", {"name": "Budzet"})
+            controller.dispatch("delete_sheet", {"name": "Budget"})
 
     def test_delete_sheet(self, excel):
         controller, _app, workbook, worksheet = excel
-        second = make_worksheet("Koszty")
+        second = make_worksheet("Costs")
         workbook.Worksheets = com_collection([worksheet, second])
 
-        controller.dispatch("delete_sheet", {"name": "Koszty"})
+        controller.dispatch("delete_sheet", {"name": "Costs"})
 
         second.Delete.assert_called_once()
 
     def test_rename_sheet(self, excel):
         controller, _app, _workbook, worksheet = excel
-        controller.dispatch("rename_sheet", {"old_name": "Budzet", "new_name": "Plan"})
+        controller.dispatch("rename_sheet", {"old_name": "Budget", "new_name": "Plan"})
         assert worksheet.Name == "Plan"
 
     def test_workbook_info_lists_sheets(self, excel):
         controller, *_ = excel
         info = controller.dispatch("get_workbook_info", {})
 
-        assert info["sheets"][0]["name"] == "Budzet"
+        assert info["sheets"][0]["name"] == "Budget"
         assert info["sheets"][0]["used_range"] == "$A$1:$B$2"
-        assert info["active_sheet"] == "Budzet"
+        assert info["active_sheet"] == "Budget"
 
 
 class TestReadingData:
     def test_get_range_values_returns_matrix(self, excel):
         controller, *_ = excel
         result = controller.dispatch(
-            "get_range_values", {"sheet": "Budzet", "range_ref": "A1:B2"}
+            "get_range_values", {"sheet": "Budget", "range_ref": "A1:B2"}
         )
 
         assert result["values"] == [[1, 2], [3, 4]]
@@ -218,23 +218,23 @@ class TestReadingData:
         worksheet.Range("A1").Value = 42
 
         result = controller.dispatch(
-            "get_range_values", {"sheet": "Budzet", "range_ref": "A1"}
+            "get_range_values", {"sheet": "Budget", "range_ref": "A1"}
         )
 
         assert result["values"] == [[42]]
 
     def test_get_range_values_rejects_bad_reference(self, excel):
         controller, _app, _workbook, worksheet = excel
-        worksheet.Range.side_effect = make_com_error(-2147352571, "zly zakres")
+        worksheet.Range.side_effect = make_com_error(-2147352571, "bad range")
 
         with pytest.raises(InvalidReferenceError):
             controller.dispatch(
-                "get_range_values", {"sheet": "Budzet", "range_ref": "ZZ!!"}
+                "get_range_values", {"sheet": "Budget", "range_ref": "ZZ!!"}
             )
 
     def test_get_used_range(self, excel):
         controller, *_ = excel
-        result = controller.dispatch("get_used_range", {"sheet": "Budzet"})
+        result = controller.dispatch("get_used_range", {"sheet": "Budget"})
 
         assert result["range"] == "$A$1:$B$2"
         assert result["values"] == [[1, 2], [3, 4]]
@@ -244,7 +244,7 @@ class TestWritingData:
     def test_set_cell(self, excel):
         controller, _app, _workbook, worksheet = excel
         controller.dispatch(
-            "set_cell", {"sheet": "Budzet", "cell_ref": "B2", "value": 1500}
+            "set_cell", {"sheet": "Budget", "cell_ref": "B2", "value": 1500}
         )
         assert worksheet.Range("B2").Value == 1500
 
@@ -254,13 +254,13 @@ class TestWritingData:
         result = controller.dispatch(
             "set_range",
             {
-                "sheet": "Budzet",
+                "sheet": "Budget",
                 "start_cell": "A1",
-                "values_2d": [["Nazwa", "Kwota"], ["Serwer", 1200]],
+                "values_2d": [["Name", "Amount"], ["Server", 1200]],
             },
         )
 
-        assert worksheet.Range("A1:B2").Value == (("Nazwa", "Kwota"), ("Serwer", 1200))
+        assert worksheet.Range("A1:B2").Value == (("Name", "Amount"), ("Server", 1200))
         assert result["rows"] == 2
 
     def test_set_range_block_starts_at_anchor(self, excel):
@@ -270,7 +270,7 @@ class TestWritingData:
 
         controller.dispatch(
             "set_range",
-            {"sheet": "Budzet", "start_cell": "C3", "values_2d": [[1, 2, 3]]},
+            {"sheet": "Budget", "start_cell": "C3", "values_2d": [[1, 2, 3]]},
         )
 
         assert worksheet.Range("C3:E3").Value == ((1, 2, 3),)
@@ -280,7 +280,7 @@ class TestWritingData:
 
         controller.dispatch(
             "set_range",
-            {"sheet": "Budzet", "start_cell": "A1", "values_2d": [["a", "b"], ["c"]]},
+            {"sheet": "Budget", "start_cell": "A1", "values_2d": [["a", "b"], ["c"]]},
         )
 
         assert worksheet.Range("A1:B2").Value == (("a", "b"), ("c", None))
@@ -289,14 +289,14 @@ class TestWritingData:
         controller, *_ = excel
         with pytest.raises(InvalidReferenceError):
             controller.dispatch(
-                "set_range", {"sheet": "Budzet", "start_cell": "A1", "values_2d": []}
+                "set_range", {"sheet": "Budget", "start_cell": "A1", "values_2d": []}
             )
 
     def test_set_formula_adds_equals_sign(self, excel):
         controller, _app, _workbook, worksheet = excel
 
         result = controller.dispatch(
-            "set_formula", {"sheet": "Budzet", "cell_ref": "C1", "formula": "SUM(A1:A10)"}
+            "set_formula", {"sheet": "Budget", "cell_ref": "C1", "formula": "SUM(A1:A10)"}
         )
 
         assert worksheet.Range("C1").Formula == "=SUM(A1:A10)"
@@ -304,44 +304,44 @@ class TestWritingData:
 
     def test_clear_range_contents_only(self, excel):
         controller, _app, _workbook, worksheet = excel
-        controller.dispatch("clear_range", {"sheet": "Budzet", "range_ref": "A1:B2"})
+        controller.dispatch("clear_range", {"sheet": "Budget", "range_ref": "A1:B2"})
         worksheet.Range("A1:B2").ClearContents.assert_called_once()
 
     def test_clear_range_with_formatting(self, excel):
         controller, _app, _workbook, worksheet = excel
         controller.dispatch(
             "clear_range",
-            {"sheet": "Budzet", "range_ref": "A1:B2", "contents_only": False},
+            {"sheet": "Budget", "range_ref": "A1:B2", "contents_only": False},
         )
         worksheet.Range("A1:B2").Clear.assert_called_once()
 
     def test_insert_rows_uses_span(self, excel):
         controller, _app, _workbook, worksheet = excel
-        controller.dispatch("insert_rows", {"sheet": "Budzet", "start_row": 2, "count": 3})
+        controller.dispatch("insert_rows", {"sheet": "Budget", "start_row": 2, "count": 3})
         worksheet.Rows.assert_called_once_with("2:4")
 
     def test_delete_rows(self, excel):
         controller, _app, _workbook, worksheet = excel
-        controller.dispatch("delete_rows", {"sheet": "Budzet", "start_row": 5})
+        controller.dispatch("delete_rows", {"sheet": "Budget", "start_row": 5})
         worksheet.Rows.assert_called_once_with("5:5")
 
     def test_insert_rows_rejects_zero_count(self, excel):
         controller, *_ = excel
         with pytest.raises(InvalidReferenceError):
             controller.dispatch(
-                "insert_rows", {"sheet": "Budzet", "start_row": 1, "count": 0}
+                "insert_rows", {"sheet": "Budget", "start_row": 1, "count": 0}
             )
 
     def test_insert_columns_accepts_letter(self, excel):
         controller, _app, _workbook, worksheet = excel
         controller.dispatch(
-            "insert_columns", {"sheet": "Budzet", "start_col": "C", "count": 2}
+            "insert_columns", {"sheet": "Budget", "start_col": "C", "count": 2}
         )
         worksheet.Columns.assert_called_once_with("C:D")
 
     def test_insert_columns_accepts_number(self, excel):
         controller, _app, _workbook, worksheet = excel
-        controller.dispatch("insert_columns", {"sheet": "Budzet", "start_col": 27})
+        controller.dispatch("insert_columns", {"sheet": "Budget", "start_col": 27})
         worksheet.Columns.assert_called_once_with("AA:AA")
 
 
@@ -352,7 +352,7 @@ class TestFormatting:
         result = controller.dispatch(
             "set_cell_format",
             {
-                "sheet": "Budzet",
+                "sheet": "Budget",
                 "range_ref": "A1:D1",
                 "bold": True,
                 "fill_color": "#FF0000",
@@ -371,27 +371,27 @@ class TestFormatting:
         with pytest.raises(InvalidReferenceError):
             controller.dispatch(
                 "set_cell_format",
-                {"sheet": "Budzet", "range_ref": "A1", "align": "ukosnie"},
+                {"sheet": "Budget", "range_ref": "A1", "align": "ukosnie"},
             )
 
     def test_set_column_width_fixed(self, excel):
         controller, _app, _workbook, worksheet = excel
         controller.dispatch(
-            "set_column_width", {"sheet": "Budzet", "column": "B", "width": 22}
+            "set_column_width", {"sheet": "Budget", "column": "B", "width": 22}
         )
         assert worksheet.Columns("B:B").ColumnWidth == 22.0
 
     def test_set_column_width_auto(self, excel):
         controller, _app, _workbook, worksheet = excel
         result = controller.dispatch(
-            "set_column_width", {"sheet": "Budzet", "column": 2, "width": "auto"}
+            "set_column_width", {"sheet": "Budget", "column": 2, "width": "auto"}
         )
         worksheet.Columns("B:B").AutoFit.assert_called_once()
         assert result["mode"] == "auto"
 
     def test_merge_cells_centers_by_default(self, excel):
         controller, _app, _workbook, worksheet = excel
-        controller.dispatch("merge_cells", {"sheet": "Budzet", "range_ref": "A1:D1"})
+        controller.dispatch("merge_cells", {"sheet": "Budget", "range_ref": "A1:D1"})
 
         target = worksheet.Range("A1:D1")
         target.Merge.assert_called_once()
@@ -399,7 +399,7 @@ class TestFormatting:
 
     def test_freeze_panes_toggles_window(self, excel):
         controller, app, _workbook, worksheet = excel
-        controller.dispatch("freeze_panes", {"sheet": "Budzet", "cell_ref": "A2"})
+        controller.dispatch("freeze_panes", {"sheet": "Budget", "cell_ref": "A2"})
 
         worksheet.Range("A2").Select.assert_called_once()
         assert app.ActiveWindow.FreezePanes is True
@@ -412,7 +412,7 @@ class TestConditionalFormatting:
         controller.dispatch(
             "apply_conditional_formatting",
             {
-                "sheet": "Budzet",
+                "sheet": "Budget",
                 "range_ref": "B2:B20",
                 "rule_type": "cell_value",
                 "params": {"operator": "greater", "formula1": 1000, "fill_color": "red"},
@@ -429,7 +429,7 @@ class TestConditionalFormatting:
         controller.dispatch(
             "apply_conditional_formatting",
             {
-                "sheet": "Budzet",
+                "sheet": "Budget",
                 "range_ref": "B2:B20",
                 "rule_type": "cell_value",
                 "params": {"operator": "between", "formula1": 10, "formula2": 20},
@@ -446,7 +446,7 @@ class TestConditionalFormatting:
             controller.dispatch(
                 "apply_conditional_formatting",
                 {
-                    "sheet": "Budzet",
+                    "sheet": "Budget",
                     "range_ref": "B2:B20",
                     "rule_type": "cell_value",
                     "params": {"operator": "greater"},
@@ -459,7 +459,7 @@ class TestConditionalFormatting:
         controller.dispatch(
             "apply_conditional_formatting",
             {
-                "sheet": "Budzet",
+                "sheet": "Budget",
                 "range_ref": "A2:D20",
                 "rule_type": "expression",
                 "params": {"formula": "=$D2>1000", "bold": True},
@@ -476,7 +476,7 @@ class TestConditionalFormatting:
         controller.dispatch(
             "apply_conditional_formatting",
             {
-                "sheet": "Budzet",
+                "sheet": "Budget",
                 "range_ref": "B2:B20",
                 "rule_type": "color_scale",
                 "params": {"colors": ["#FF0000", "#00FF00"]},
@@ -491,7 +491,7 @@ class TestConditionalFormatting:
         with pytest.raises(UnsupportedOperationError):
             controller.dispatch(
                 "apply_conditional_formatting",
-                {"sheet": "Budzet", "range_ref": "A1", "rule_type": "magia"},
+                {"sheet": "Budget", "range_ref": "A1", "rule_type": "magia"},
             )
 
 
@@ -502,14 +502,14 @@ class TestChartsAndTables:
         result = controller.dispatch(
             "add_chart",
             {
-                "sheet": "Budzet",
+                "sheet": "Budget",
                 "chart_type": "column",
                 "data_range": "A1:B5",
                 "left": 200,
                 "top": 20,
                 "width": 400,
                 "height": 250,
-                "title": "Koszty",
+                "title": "Costs",
             },
         )
 
@@ -526,7 +526,7 @@ class TestChartsAndTables:
             controller.dispatch(
                 "add_chart",
                 {
-                    "sheet": "Budzet",
+                    "sheet": "Budget",
                     "chart_type": "sloneczny",
                     "data_range": "A1:B5",
                     "left": 0,
@@ -541,7 +541,7 @@ class TestChartsAndTables:
 
         controller.dispatch(
             "create_table",
-            {"sheet": "Budzet", "range_ref": "A1:D20", "table_name": "Wydatki"},
+            {"sheet": "Budget", "range_ref": "A1:D20", "table_name": "Wydatki"},
         )
 
         worksheet.ListObjects.Add.assert_called_once_with(
@@ -555,7 +555,7 @@ class TestChartsAndTables:
         controller.dispatch(
             "create_table",
             {
-                "sheet": "Budzet",
+                "sheet": "Budget",
                 "range_ref": "A1:D20",
                 "table_name": "Dane",
                 "has_headers": False,
@@ -573,19 +573,19 @@ class TestChartsAndTables:
         result = controller.dispatch(
             "add_pivot_table",
             {
-                "sheet": "Budzet",
+                "sheet": "Budget",
                 "source_range": "A1:D50",
                 "dest_cell": "F1",
-                "rows": ["Kategoria"],
-                "columns": ["Miesiac"],
-                "values": [{"field": "Kwota", "function": "sum"}],
+                "rows": ["Category"],
+                "columns": ["Month"],
+                "values": [{"field": "Amount", "function": "sum"}],
             },
         )
 
-        assert fields["Kategoria"].Orientation == 1
-        assert fields["Miesiac"].Orientation == 2
-        pivot.AddDataField.assert_called_once_with(fields["Kwota"], "Sum - Kwota", -4157)
-        assert result["source"] == "'Budzet'!$A1:D50"
+        assert fields["Category"].Orientation == 1
+        assert fields["Month"].Orientation == 2
+        pivot.AddDataField.assert_called_once_with(fields["Amount"], "Sum - Amount", -4157)
+        assert result["source"] == "'Budget'!$A1:D50"
 
     def test_add_pivot_table_rejects_unknown_function(self, excel):
         controller, *_ = excel
@@ -593,10 +593,10 @@ class TestChartsAndTables:
             controller.dispatch(
                 "add_pivot_table",
                 {
-                    "sheet": "Budzet",
+                    "sheet": "Budget",
                     "source_range": "A1:D50",
                     "dest_cell": "F1",
-                    "values": [{"field": "Kwota", "function": "mediana"}],
+                    "values": [{"field": "Amount", "function": "mediana"}],
                 },
             )
 
@@ -607,15 +607,15 @@ class TestErrorMapping:
         worksheet.Range.side_effect = make_com_error(-2147023174, "brak serwera RPC")
 
         with pytest.raises(ComConnectionError):
-            controller.dispatch("set_cell", {"sheet": "Budzet", "cell_ref": "A1", "value": 1})
+            controller.dispatch("set_cell", {"sheet": "Budget", "cell_ref": "A1", "value": 1})
 
     def test_generic_com_error_keeps_description(self, excel):
         controller, _app, _workbook, worksheet = excel
-        worksheet.Rows.side_effect = make_com_error(-2147352567, "Nie mozna wstawic wierszy")
+        worksheet.Rows.side_effect = make_com_error(-2147352567, "Cannot insert rows")
 
         with pytest.raises(Exception) as info:
-            controller.dispatch("insert_rows", {"sheet": "Budzet", "start_row": 1})
-        assert "Nie mozna wstawic wierszy" in str(info.value)
+            controller.dispatch("insert_rows", {"sheet": "Budget", "start_row": 1})
+        assert "Cannot insert rows" in str(info.value)
 
 
 class TestHelpers:
@@ -665,7 +665,7 @@ class TestColumnAndRowSizing:
         controller, _app, _workbook, worksheet = excel
 
         result = controller.dispatch(
-            "delete_columns", {"sheet": "Budzet", "start_col": "C", "count": 2}
+            "delete_columns", {"sheet": "Budget", "start_col": "C", "count": 2}
         )
 
         worksheet.Columns.assert_called_with("C:D")
@@ -675,7 +675,7 @@ class TestColumnAndRowSizing:
     def test_delete_columns_accepts_number(self, excel):
         controller, _app, _workbook, worksheet = excel
 
-        controller.dispatch("delete_columns", {"sheet": "Budzet", "start_col": 3})
+        controller.dispatch("delete_columns", {"sheet": "Budget", "start_col": 3})
 
         worksheet.Columns.assert_called_with("C:C")
 
@@ -684,7 +684,7 @@ class TestColumnAndRowSizing:
         worksheet.Rows.return_value.RowHeight = 30.0
 
         result = controller.dispatch(
-            "set_row_height", {"sheet": "Budzet", "row": 1, "height": 30}
+            "set_row_height", {"sheet": "Budget", "row": 1, "height": 30}
         )
 
         assert worksheet.Rows.call_args[0][0] == 1
@@ -694,7 +694,7 @@ class TestColumnAndRowSizing:
         controller, _app, _workbook, worksheet = excel
 
         result = controller.dispatch(
-            "set_row_height", {"sheet": "Budzet", "row": 2, "height": "auto"}
+            "set_row_height", {"sheet": "Budget", "row": 2, "height": "auto"}
         )
 
         worksheet.Rows.return_value.AutoFit.assert_called_once()
@@ -704,7 +704,7 @@ class TestColumnAndRowSizing:
         controller, *_ = excel
         with pytest.raises(InvalidReferenceError):
             controller.dispatch(
-                "set_row_height", {"sheet": "Budzet", "row": 0, "height": 20}
+                "set_row_height", {"sheet": "Budget", "row": 0, "height": 20}
             )
 
 
@@ -720,7 +720,7 @@ class TestFindReplaceAndSort:
 
         result = controller.dispatch(
             "find_replace",
-            {"old_text": "a", "new_text": "b", "sheet": "Budzet", "whole_cell": True},
+            {"old_text": "a", "new_text": "b", "sheet": "Budget", "whole_cell": True},
         )
 
         worksheet.UsedRange.Replace.assert_not_called()
@@ -732,7 +732,7 @@ class TestFindReplaceAndSort:
         controller.dispatch(
             "sort_range",
             {
-                "sheet": "Budzet",
+                "sheet": "Budget",
                 "range_ref": "A1:C4",
                 "sort_by": "B",
                 "order": "descending",
@@ -747,11 +747,11 @@ class TestFindReplaceAndSort:
         controller, _app, _workbook, worksheet = excel
 
         controller.dispatch(
-            "sort_range", {"sheet": "Budzet", "range_ref": "A1:C4", "sort_by": "B"}
+            "sort_range", {"sheet": "Budget", "range_ref": "A1:C4", "sort_by": "B"}
         )
 
-        # Bez jawnego xlSortColumns Excel uzywa "lepkiej" wartosci z poprzedniego
-        # sortowania i potrafi poprzestawiac kolumny zamiast wierszy.
+        # Without an explicit xlSortColumns, Excel reuses the "sticky" value
+        # from the previous sort and can reorder columns instead of rows.
         kwargs = worksheet.ranges["A1:C4"].Sort.call_args.kwargs
         assert kwargs["Orientation"] == 1
         assert kwargs["MatchCase"] is False
@@ -762,7 +762,7 @@ class TestFindReplaceAndSort:
         controller.dispatch(
             "sort_range",
             {
-                "sheet": "Budzet",
+                "sheet": "Budget",
                 "range_ref": "A1:C4",
                 "sort_by": 2,
                 "has_headers": False,
@@ -777,10 +777,10 @@ class TestFindReplaceAndSort:
             controller.dispatch(
                 "sort_range",
                 {
-                    "sheet": "Budzet",
+                    "sheet": "Budget",
                     "range_ref": "A1:B2",
                     "sort_by": 1,
-                    "order": "rosnaco",
+                    "order": "increasing",
                 },
             )
 
@@ -791,7 +791,7 @@ class TestCopyAndValidation:
 
         controller.dispatch(
             "copy_range",
-            {"sheet": "Budzet", "range_ref": "A1:B2", "target_cell": "D1"},
+            {"sheet": "Budget", "range_ref": "A1:B2", "target_cell": "D1"},
         )
 
         source = worksheet.ranges["A1:B2"]
@@ -803,7 +803,7 @@ class TestCopyAndValidation:
         controller.dispatch(
             "copy_range",
             {
-                "sheet": "Budzet",
+                "sheet": "Budget",
                 "range_ref": "A1:B2",
                 "target_cell": "D1",
                 "paste": "values",
@@ -818,10 +818,10 @@ class TestCopyAndValidation:
             controller.dispatch(
                 "copy_range",
                 {
-                    "sheet": "Budzet",
+                    "sheet": "Budget",
                     "range_ref": "A1:B2",
                     "target_cell": "D1",
-                    "paste": "wszystko",
+                    "paste": "everything",
                 },
             )
 
@@ -830,19 +830,19 @@ class TestCopyAndValidation:
 
         result = controller.dispatch(
             "add_data_validation",
-            {"sheet": "Budzet", "range_ref": "E1:E9", "values": ["tak", "nie"]},
+            {"sheet": "Budget", "range_ref": "E1:E9", "values": ["yes", "no"]},
         )
 
         args = worksheet.ranges["E1:E9"].Validation.Add.call_args[0]
         assert args[0] == 3  # xlValidateList
-        assert args[3] == "tak,nie"
-        assert result["formula1"] == "tak,nie"
+        assert args[3] == "yes,no"
+        assert result["formula1"] == "yes,no"
 
     def test_validation_without_values_or_formula_is_rejected(self, excel):
         controller, *_ = excel
         with pytest.raises(InvalidReferenceError):
             controller.dispatch(
-                "add_data_validation", {"sheet": "Budzet", "range_ref": "E1"}
+                "add_data_validation", {"sheet": "Budget", "range_ref": "E1"}
             )
 
     def test_validation_replaces_previous_rule(self, excel):
@@ -850,7 +850,7 @@ class TestCopyAndValidation:
 
         controller.dispatch(
             "add_data_validation",
-            {"sheet": "Budzet", "range_ref": "E1", "values": "tak,nie"},
+            {"sheet": "Budget", "range_ref": "E1", "values": "yes,no"},
         )
 
         worksheet.ranges["E1"].Validation.Delete.assert_called_once()
@@ -859,7 +859,7 @@ class TestCopyAndValidation:
 class TestExcelExport:
     def test_export_pdf_workbook_scope(self, excel, tmp_path):
         controller, _app, workbook, _worksheet = excel
-        target = tmp_path / "raport.pdf"
+        target = tmp_path / "report.pdf"
 
         result = controller.dispatch("export_pdf", {"path": str(target)})
 
@@ -870,7 +870,7 @@ class TestExcelExport:
         controller, _app, _workbook, worksheet = excel
 
         result = controller.dispatch(
-            "export_pdf", {"path": str(tmp_path / "a.pdf"), "sheet": "Budzet"}
+            "export_pdf", {"path": str(tmp_path / "a.pdf"), "sheet": "Budget"}
         )
 
         worksheet.ExportAsFixedFormat.assert_called_once()
@@ -889,7 +889,7 @@ class TestExcelExport:
             controller.dispatch(
                 "export_range_image",
                 {
-                    "sheet": "Budzet",
+                    "sheet": "Budget",
                     "range_ref": "A1:B2",
                     "path": str(tmp_path / "a.svg"),
                 },
@@ -897,7 +897,7 @@ class TestExcelExport:
 
     def test_range_image_removes_helper_chart(self, excel, tmp_path):
         controller, _app, _workbook, worksheet = excel
-        target = tmp_path / "zakres.png"
+        target = tmp_path / "range.png"
         chart_object = worksheet.ChartObjects.return_value.Add.return_value
         chart_object.Chart.Export.side_effect = lambda path, _fmt: (
             open(path, "wb").write(b"PNG")
@@ -905,7 +905,7 @@ class TestExcelExport:
 
         controller.dispatch(
             "export_range_image",
-            {"sheet": "Budzet", "range_ref": "A1:B2", "path": str(target)},
+            {"sheet": "Budget", "range_ref": "A1:B2", "path": str(target)},
         )
 
         chart_object.Chart.Export.assert_called_once_with(str(target), "PNG")
@@ -913,9 +913,9 @@ class TestExcelExport:
 
     def test_range_image_rejects_empty_output(self, excel, tmp_path):
         controller, _app, _workbook, worksheet = excel
-        target = tmp_path / "pusty.png"
+        target = tmp_path / "empty.png"
         chart_object = worksheet.ChartObjects.return_value.Add.return_value
-        # Excel potrafi "zapisac" plik zerowej dlugosci i nie zglosic bledu.
+        # Excel can "write" a zero-length file and report no error at all.
         chart_object.Chart.Export.side_effect = lambda path, _fmt: (
             open(path, "wb").close()
         )
@@ -923,7 +923,7 @@ class TestExcelExport:
         with pytest.raises(UnsupportedOperationError):
             controller.dispatch(
                 "export_range_image",
-                {"sheet": "Budzet", "range_ref": "A1:B2", "path": str(target)},
+                {"sheet": "Budget", "range_ref": "A1:B2", "path": str(target)},
             )
 
         chart_object.Delete.assert_called_once()
@@ -933,4 +933,4 @@ class TestExcelExport:
         worksheet.ChartObjects.return_value.Count = 0
 
         with pytest.raises(InvalidReferenceError):
-            controller.dispatch("format_chart", {"sheet": "Budzet"})
+            controller.dispatch("format_chart", {"sheet": "Budget"})
