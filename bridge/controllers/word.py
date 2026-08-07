@@ -42,6 +42,39 @@ WD_OUTLINE_BODY_TEXT = 10
 WD_LINE_STYLE_SINGLE = 1
 WD_EXPORT_FORMAT_PDF = 17
 WD_STYLE_NORMAL = -1
+WD_BULLET_GALLERY = 1
+WD_OUTLINE_NUMBER_GALLERY = 3
+WD_LIST_NUMBER_ARABIC = 0
+WD_TRAILING_TAB = 0
+WD_LIST_APPLY_TO_WHOLE = 0
+WD_LIST_BEHAVIOR_MULTILEVEL = 2
+WD_ORIENT_PORTRAIT = 0
+WD_ORIENT_LANDSCAPE = 1
+POINTS_PER_LINE = 12.0
+
+WD_LINE_SPACING_RULES: dict[float, int] = {
+    1.0: 0,   # wdLineSpaceSingle
+    1.5: 1,   # wdLineSpace1pt5
+    2.0: 2,   # wdLineSpaceDouble
+}
+WD_LINE_SPACE_MULTIPLE = 5
+
+# Wylacznie klucze angielskie - to sa etykiety wbudowane Worda. Kazdy inny
+# tekst (np. "Rysunek") jest traktowany jako etykieta wlasna i trafia do
+# dokumentu doslownie, co jest jedynym sposobem na polskie podpisy niezaleznie
+# od jezyka, w jakim Word akurat nazywa swoje etykiety wbudowane.
+WD_CAPTION_LABELS: dict[str, int] = {
+    "figure": -1,
+    "table": -2,
+    "equation": -3,
+}
+
+WD_ORIENTATIONS: dict[str, int] = {
+    "portrait": WD_ORIENT_PORTRAIT,
+    "pionowa": WD_ORIENT_PORTRAIT,
+    "landscape": WD_ORIENT_LANDSCAPE,
+    "pozioma": WD_ORIENT_LANDSCAPE,
+}
 
 
 class WordController(BaseController):
@@ -402,27 +435,47 @@ class WordController(BaseController):
                 text, level = str(item), 1
             entries.append((text, max(1, min(level, 9))))
 
+        # Trzymamy numery akapitow, a nie obiekty COM. Kazde kolejne
+        # InsertParagraphAfter przestawia wczesniej pobrane obiekty Paragraph,
+        # przez co zakres liczony z ich Range obejmowal tylko ostatnia pozycje -
+        # numerowana byla wtedy jedna pozycja zamiast calej listy, a nastepna
+        # lista doklejala sie do poprzedniej.
         first_index = None
-        paragraphs = []
+        levels: list[tuple[int, int]] = []
         for text, level in entries:
-            paragraph = self._append_paragraph(document, text)
-            paragraphs.append((paragraph, level))
+            self._append_paragraph(document, text)
+            index = int(document.Paragraphs.Count)
+            levels.append((index, level))
             if first_index is None:
-                first_index = int(document.Paragraphs.Count)
+                first_index = index
 
-        start = paragraphs[0][0].Range.Start
-        end = paragraphs[-1][0].Range.End
-        list_range = document.Range(start, end)
+        last_index = int(document.Paragraphs.Count)
+        list_range = document.Range(
+            document.Paragraphs(first_index).Range.Start,
+            document.Paragraphs(last_index).Range.End,
+        )
 
-        if numbered:
+        nested = any(level > 1 for _, level in levels)
+        if nested:
+            # Listy domyslne (ApplyNumberDefault/ApplyBulletDefault) sa
+            # jednopoziomowe - proba zejscia nizej konczy sie bledem OLE
+            # 0x800a1200. Poziomy daje dopiero szablon z galerii.
+            gallery = WD_OUTLINE_NUMBER_GALLERY if numbered else WD_BULLET_GALLERY
+            list_range.ListFormat.ApplyListTemplateWithLevel(
+                ListTemplate=self.app.ListGalleries(gallery).ListTemplates(1),
+                ContinuePreviousList=False,
+                ApplyTo=WD_LIST_APPLY_TO_WHOLE,
+                DefaultListBehavior=WD_LIST_BEHAVIOR_MULTILEVEL,
+            )
+        elif numbered:
             list_range.ListFormat.ApplyNumberDefault()
         else:
             list_range.ListFormat.ApplyBulletDefault()
 
-        for paragraph, level in paragraphs:
+        for index, level in levels:
             if level > 1:
                 try:
-                    paragraph.Range.ListFormat.ListLevelNumber = level
+                    document.Paragraphs(index).Range.ListFormat.ListLevelNumber = level
                 except com_error:
                     pass
 
@@ -430,7 +483,7 @@ class WordController(BaseController):
             "items": len(entries),
             "numbered": bool(numbered),
             "first_paragraph_index": first_index,
-            "last_paragraph_index": int(document.Paragraphs.Count),
+            "last_paragraph_index": last_index,
         }
 
     @action("set_text_style")

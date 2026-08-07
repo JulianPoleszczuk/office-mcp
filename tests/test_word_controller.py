@@ -56,6 +56,34 @@ def make_document(paragraphs=None, path=r"C:\dokumenty\raport.docx", name="rapor
     return document
 
 
+def growing_paragraphs(document):
+    """Atrapa kolekcji akapitow, ktora rosnie tak jak w prawdziwym Wordzie.
+
+    Statyczna kolekcja nie wykrylaby bledu, przez ktory zakres listy obejmowal
+    tylko ostatnia pozycje - przy niezmiennym ``Count`` pierwszy i ostatni
+    indeks sa tym samym akapitem.
+    """
+    items = [make_paragraph("\r", start=0, end=1)]
+
+    collection = MagicMock()
+    collection.side_effect = lambda index, *_: items[int(index) - 1]
+    collection.__iter__ = lambda _self: iter(items)
+    type(collection).Count = property(lambda _self: len(items))
+    document.Paragraphs = collection
+
+    def new_paragraph(*_args, **_kwargs):
+        start = 10 * len(items)
+        items.append(make_paragraph("\r", start=start, end=start + 1))
+
+    def write_text(text, *_args, **_kwargs):
+        start = items[-1].Range.Start
+        items[-1] = make_paragraph(f"{text}\r", start=start, end=start + len(str(text)))
+
+    document.Content.InsertParagraphAfter.side_effect = new_paragraph
+    document.Content.InsertAfter.side_effect = write_text
+    return items
+
+
 @pytest.fixture
 def word():
     document = make_document()
@@ -284,9 +312,7 @@ class TestContent:
 
     def test_add_bullet_list_applies_bullets(self, word):
         controller, _app, document = word
-        first = make_paragraph("Pierwszy\r", start=0, end=9)
-        second = make_paragraph("Zagniezdzony\r", start=9, end=22)
-        document.Paragraphs = com_collection([first, second])
+        items = growing_paragraphs(document)
 
         result = controller.dispatch(
             "add_bullet_list",
@@ -294,9 +320,9 @@ class TestContent:
         )
 
         assert document.Content.InsertAfter.call_count == 2
-        document.Range.assert_called_once_with(9, 22)
-        document.Range.return_value.ListFormat.ApplyBulletDefault.assert_called_once()
-        assert second.Range.ListFormat.ListLevelNumber == 2
+        # Zakres obejmuje obie pozycje - nie tylko ostatnia.
+        document.Range.assert_called_once_with(items[0].Range.Start, items[-1].Range.End)
+        assert items[1].Range.ListFormat.ListLevelNumber == 2
         assert result["items"] == 2
 
     def test_add_numbered_list_applies_numbering(self, word):
