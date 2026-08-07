@@ -5,14 +5,14 @@ Serwer MCP, który pozwala Claude'owi sterować **otwartymi** aplikacjami Micros
 promptem, a zmiany widać na żywo w oknie aplikacji — bez pośredniego generowania plików i
 otwierania ich ręcznie.
 
-- 121 narzędzi MCP: `ppt_*` (53), `xl_*` (36), `doc_*` (33)
+- 129 narzędzi MCP: `ppt_*` (53), `xl_*` (36), `doc_*` (39), `office_status`
 - pełny cykl: tworzenie, odczyt istniejących dokumentów, edycja, formatowanie, wykresy, obrazy, tabele,
   animacje i przejścia slajdów
 - podgląd we wszystkich trzech aplikacjach: slajd i zakres Excela do PNG, każdy dokument do PDF —
   model widzi, co zbudował, zamiast pracować w ciemno
 - styl jako jeden byt: paleta i czcionki motywu, tło na wzorcu — zamiast powtarzania hexów przy każdym kształcie
 - podłącza się do już uruchomionej instancji Office zamiast otwierać drugą
-- 350 testów jednostkowych i integracyjnych działających bez zainstalowanego Office
+- 367 testów jednostkowych i integracyjnych działających bez zainstalowanego Office
 
 ## Architektura
 
@@ -251,6 +251,29 @@ ppt_add_smartart(2, "bProcess3", ["Badania", "Skalowanie", "Produkt"], 60, 140, 
 Podwęzły powstają przez `AddNode` na rodzicu, nie przez `Demote()` — część układów (m.in.
 `hierarchy1`) odrzuca `Demote()` komunikatem „operacja nie jest obsługiwana przez bieżący obiekt".
 
+#### Praca dyplomowa
+
+Zestaw narzędzi wystarczający na skład pracy magisterskiej: strona tytułowa, spis treści za nią,
+numerowane rozdziały, podpisy rysunków i tabel, spis rysunków, przypisy, oprawa dwustronna.
+
+```
+doc_set_default_font("Times New Roman", 12)
+doc_set_page_margins(2.5, 2.5, 3.5, 2.5, unit="cm")
+doc_set_page_setup(gutter=0.5, mirror_margins=True)         # margines na oprawę
+doc_set_paragraph_format(style="Normal", line_spacing=1.5,
+                         first_line_indent=1.25, alignment="justify", unit="cm")
+... treść z doc_add_heading / doc_add_paragraph ...
+doc_set_heading_numbering(levels=3)                          # 1., 1.1, 1.1.1
+doc_insert_table_of_contents(levels=3, position=<akapit>)    # za stroną tytułową
+doc_update_fields()                                          # bez tego spis jest pusty
+```
+
+**Etykiety podpisów.** `doc_add_caption(label="figure")` używa etykiety wbudowanej, a Word sam
+decyduje, czy nazwie ją „Figure" czy „Rysunek" — bywa to niespójne między instalacjami. Praca
+po polsku powinna podawać etykietę wprost: `label="Rysunek"`, `label="Tabela"`. Nazwa trafia
+wtedy do dokumentu dosłownie, a `doc_insert_table_of_figures(label="Rysunek")` zbierze te podpisy
+do spisu.
+
 #### Pętla zwrotna (wszystkie trzy aplikacje)
 
 Bez podglądu model wstawia elementy w ciemno i nie wie, że stopka nachodzi na panel albo że
@@ -380,6 +403,12 @@ Funkcje agregujące tabeli przestawnej: `sum`, `count`, `average`, `max`, `min`,
 | `doc_set_columns(count=1, section=1, spacing=None)` | Układ wielokolumnowy |
 | `doc_set_default_font(name=None, size=None)` | Czcionka stylu Normalny — podstawa dokumentu |
 | `doc_format_table(table_index, style, borders, header_bold, ...)` | Formatowanie wstawionej tabeli |
+| `doc_set_paragraph_format(paragraph_index=None, style=None, line_spacing, ...)` | Interlinia, wcięcia, łamanie akapitów |
+| `doc_set_heading_numbering(enable=True, levels=3)` | Numeracja rozdziałów 1., 1.1, 1.1.1 |
+| `doc_add_caption(paragraph_index, text, label, above=False)` | Numerowany podpis rysunku lub tabeli |
+| `doc_insert_table_of_figures(label, position)` | Spis rysunków albo tabel |
+| `doc_update_fields()` | Odświeża spisy, podpisy i numerację |
+| `doc_set_page_setup(orientation, gutter, mirror_margins, ...)` | Oprawa, marginesy lustrzane, orientacja |
 | `doc_export_pdf(path, open_after=False)` | Dokument do PDF-u |
 
 Nazwy stylów można podawać po angielsku (`Heading 1`, `Normal`, `Quote`, `Caption`) także w
@@ -424,7 +453,7 @@ Przykładowa odpowiedź błędu narzędzia MCP:
 python -m pytest -q
 ```
 
-350 testów, wszystkie bez zainstalowanego Office:
+367 testów, wszystkie bez zainstalowanego Office:
 
 - `tests/test_bridge_protocol.py` — kodowanie/dekodowanie protokołu oraz test integracyjny
   serwera TCP (prawdziwy socket, atrapa kontrolera),
@@ -463,6 +492,17 @@ Scenariusze do ręcznego testu na żywym Office: `examples/example_prompts.md`.
   `ExternalExporter` i każde wywołanie kończy się `TypeError: The Python instance can not be
   converted to a COM object`, niezależnie od wiązania. Skutek uboczny: nie da się wybrać
   jakości ekran/druk ani zakresu slajdów.
+- **`ppt_open_presentation` nie zmienia „aktywnej" prezentacji.** PowerPoint ignoruje
+  `Windows.Activate()`, gdy aplikacja nie jest na wierzchu — `ActivePresentation` potrafi
+  wskazywać zupełnie inny plik niż ten właśnie otwarty, a kolejne narzędzia po cichu edytują
+  nie ten dokument. Kontroler zapamiętuje więc ścieżkę pliku, na którym pracuje, zamiast ufać
+  `ActivePresentation`. Excel i Word takiego problemu nie mają.
+- **`doc_add_paragraph("")` nie tworzy pustego akapitu** — kontroler świadomie używa ponownie
+  pustego akapitu na końcu dokumentu. Odstępy pionowe robi się przez
+  `doc_set_paragraph_format(space_before=…)`, a nie pustymi akapitami.
+- **Listy z zagnieżdżeniem wymagają szablonu z galerii.** `ApplyNumberDefault` tworzy listę
+  jednopoziomową i zejście na poziom 2 kończy się błędem OLE 0x800a1200; kontroler wykrywa
+  pozycje z `level > 1` i sięga wtedy po szablon wielopoziomowy.
 - **Wykres liniowy bierze kolor z obrysu, nie z wypełnienia.** `series_colors` ustawia oba,
   bo `Format.Fill` działa na słupkach i kołowych, a `Format.Line` na liniowych i punktowych —
   ustawienie samego wypełnienia kończy się „sukcesem" przy niezmienionym kolorze linii.
