@@ -55,6 +55,68 @@ def powerpoint():
     return controller, app, presentation, slides
 
 
+class TestActivePresentationTracking:
+    def test_open_pins_presentation_against_stale_active(self, powerpoint, tmp_path):
+        controller, app, presentation, _slides = powerpoint
+        target = tmp_path / "wlasciwa.pptx"
+        target.write_bytes(b"x")
+        presentation.FullName = str(target)
+        presentation.Path = str(tmp_path)
+
+        # PowerPoint ignoruje Windows.Activate(), gdy nie jest na wierzchu -
+        # ActivePresentation dalej wskazuje zupelnie inny plik.
+        inna = make_presentation(path=r"C:\inna\inna.pptx", name="inna.pptx")
+        app.ActivePresentation = inna
+        app.Presentations = com_collection([presentation, inna])
+
+        controller.dispatch("open_presentation", {"path": str(target)})
+
+        assert controller.presentation() is presentation
+
+    def test_falls_back_to_active_when_pinned_file_closed(self, powerpoint):
+        controller, app, presentation, _slides = powerpoint
+        controller._target_path = r"c:\zamknieta\znikla.pptx"
+        app.ActivePresentation = presentation
+
+        assert controller.presentation() is presentation
+        assert controller._target_path is None
+
+    def test_close_clears_pin(self, powerpoint):
+        controller, _app, presentation, _slides = powerpoint
+        presentation.Path = r"C:\prezentacje"
+
+        controller.dispatch("close", {"save": False})
+
+        assert controller._target_path is None
+
+
+class TestTitleShortcut:
+    def test_set_title_names_fallback_textbox(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        slides[0].Shapes.HasTitle = False
+        box = make_shape(shape_id=77, name="TextBox 1")
+        slides[0].Shapes.AddTextbox.return_value = box
+
+        result = controller.dispatch("set_title", {"slide_index": 1, "text": "Tytul"})
+
+        assert result["created_textbox"] is True
+        assert box.Name == "office-mcp Title"
+
+    def test_title_shortcut_finds_fallback_textbox(self, powerpoint):
+        controller, _app, _presentation, slides = powerpoint
+        box = make_shape(shape_id=77, name="office-mcp Title")
+        slides[0].Shapes = com_collection([box])
+        slides[0].Shapes.HasTitle = False
+        sequence = slides[0].TimeLine.MainSequence
+        sequence.Count = 1
+
+        # Wczesniej "title" dzialalo tylko przy prawdziwym placeholderze, wiec
+        # tytul wstawiony przez set_title byl niewidoczny dla reszty narzedzi.
+        controller.dispatch("add_animation", {"slide_index": 1, "shape_id": "title"})
+
+        assert sequence.AddEffect.call_args.kwargs["Shape"] is box
+
+
 class TestDispatch:
     def test_unknown_action_is_protocol_error(self, powerpoint):
         controller, *_ = powerpoint
