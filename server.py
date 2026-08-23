@@ -21,13 +21,18 @@ first tool call. You can also start it by hand:
 
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
 import os
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +52,10 @@ BRIDGE_PORT = int(os.environ.get("OFFICE_BRIDGE_PORT", "8765"))
 BRIDGE_AUTOSTART = os.environ.get("OFFICE_BRIDGE_AUTOSTART", "1") not in ("0", "false", "no")
 BRIDGE_START_TIMEOUT = float(os.environ.get("OFFICE_BRIDGE_START_TIMEOUT", "25"))
 CALL_TIMEOUT = float(os.environ.get("OFFICE_MCP_CALL_TIMEOUT", "60"))
+
+# Free key from unsplash.com/developers - never hardcoded, read from the
+# environment only (see ppt_search_and_add_image below).
+UNSPLASH_ACCESS_KEY = os.environ.get("UNSPLASH_ACCESS_KEY", "")
 
 CREATE_NO_WINDOW = 0x08000000
 DETACHED_PROCESS = 0x00000008
@@ -496,6 +505,99 @@ def ppt_add_image(
             "height": height,
         },
     )
+
+
+@server.tool()
+def ppt_search_and_add_image(
+    slide_index: int,
+    query: str,
+    left: float,
+    top: float,
+    width: float | None = None,
+    height: float | None = None,
+    orientation: str = "landscape",
+) -> dict[str, Any]:
+    """Finds a real photo on Unsplash matching 'query' and inserts it on the slide.
+
+    Saves a manual search-download-ppt_add_image round trip for the common
+    case of "find me a relevant stock photo for this slide". Requires the
+    UNSPLASH_ACCESS_KEY environment variable (a free key from
+    unsplash.com/developers - no card required). 'orientation' is 'landscape',
+    'portrait', or 'squarish'. Reuses the exact same Bridge action as
+    ppt_add_image once the photo is downloaded, so sizing/positioning behave
+    identically.
+    """
+    if not UNSPLASH_ACCESS_KEY:
+        return {
+            "ok": False,
+            "error": {
+                "type": "ConfigurationError",
+                "message": (
+                    "UNSPLASH_ACCESS_KEY environment variable is not set. "
+                    "Get a free key at unsplash.com/developers (no card required)."
+                ),
+            },
+        }
+
+    search_url = "https://api.unsplash.com/search/photos?" + urllib.parse.urlencode(
+        {
+            "query": query,
+            "per_page": 1,
+            "orientation": orientation,
+            "client_id": UNSPLASH_ACCESS_KEY,
+        }
+    )
+    try:
+        with urllib.request.urlopen(search_url, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - an MCP tool never raises, mirrors call_bridge
+        return {"ok": False, "error": {"type": "ImageSearchError", "message": str(exc)}}
+
+    results = data.get("results") or []
+    if not results:
+        return {
+            "ok": False,
+            "error": {
+                "type": "ImageSearchError",
+                "message": f'No Unsplash results for "{query}".',
+            },
+        }
+
+    photo = results[0]
+    image_url = photo["urls"]["regular"]
+    photographer = (photo.get("user") or {}).get("name", "Unsplash")
+
+    fd, tmp_path = tempfile.mkstemp(suffix=".jpg", prefix="office-mcp-img-")
+    os.close(fd)
+    try:
+        urllib.request.urlretrieve(image_url, tmp_path)
+    except Exception as exc:  # noqa: BLE001
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        return {"ok": False, "error": {"type": "ImageDownloadError", "message": str(exc)}}
+
+    result = call_bridge(
+        "powerpoint",
+        "add_image",
+        {
+            "slide_index": slide_index,
+            "image_path": tmp_path,
+            "left": left,
+            "top": top,
+            "width": width,
+            "height": height,
+        },
+    )
+    # PowerPoint embeds the pixel data into the .pptx on insert - the temp
+    # file isn't needed afterward regardless of success or failure.
+    with contextlib.suppress(OSError):
+        os.unlink(tmp_path)
+
+    if result.get("ok"):
+        result["result"]["source"] = "Unsplash"
+        result["result"]["photographer"] = photographer
+        result["result"]["query"] = query
+    return result
 
 
 @server.tool()
