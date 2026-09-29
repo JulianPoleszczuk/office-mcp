@@ -110,21 +110,27 @@ class PowerPointController(BaseController):
 
     def __init__(self, connection: Any) -> None:
         super().__init__(connection)
-        # Path of the presentation we work on. PowerPoint ignores
+        # Identity of the presentation we work on. PowerPoint ignores
         # Windows.Activate() when the app is not in the foreground, so
         # ActivePresentation can point at a completely different file than the
         # one we just opened - and then every later tool silently edits the
         # wrong document.
         self._target_path: str | None = None
 
+    def _presentation_key(self, presentation: Any) -> str:
+        """Pinning identity: the full path of a saved file, or just the name for a never-saved presentation - the name still identifies it uniquely among the open ones."""
+        try:
+            full_name = str(presentation.FullName)
+        except com_error:
+            full_name = ""
+        if not full_name:
+            full_name = str(presentation.Name)
+        return os.path.normcase(full_name)
+
     def _remember(self, presentation: Any) -> Any:
         """Pins a presentation as the current one for later calls."""
         try:
-            self._target_path = (
-                os.path.normcase(str(presentation.FullName))
-                if presentation.Path
-                else None
-            )
+            self._target_path = self._presentation_key(presentation)
         except com_error:
             self._target_path = None
         return presentation
@@ -142,9 +148,7 @@ class PowerPointController(BaseController):
             for index in range(1, app.Presentations.Count + 1):
                 candidate = app.Presentations(index)
                 try:
-                    if candidate.Path and (
-                        os.path.normcase(str(candidate.FullName)) == self._target_path
-                    ):
+                    if self._presentation_key(candidate) == self._target_path:
                         return candidate
                 except com_error:
                     continue
@@ -316,6 +320,74 @@ class PowerPointController(BaseController):
         return {
             **self._presentation_summary(self._remember(presentation)),
             "already_open": False,
+        }
+
+    @action("list_presentations")
+    def list_presentations(self) -> dict[str, Any]:
+        """Every open presentation with basic metadata, the current target marked."""
+        app = self.app
+        count = int(app.Presentations.Count)
+        if count == 0:
+            return {"presentation_count": 0, "presentations": []}
+
+        try:
+            target_key = self._presentation_key(self.presentation())
+        except com_error:
+            target_key = None
+
+        presentations = []
+        for index in range(1, count + 1):
+            presentation = app.Presentations(index)
+            try:
+                info = self._presentation_summary(presentation)
+                info["read_only"] = bool(presentation.ReadOnly)
+                info["index"] = index
+                info["is_target"] = target_key is not None and self._presentation_key(presentation) == target_key
+            except com_error:
+                continue
+            presentations.append(info)
+
+        return {"presentation_count": len(presentations), "presentations": presentations}
+
+    @action("activate_presentation")
+    def activate_presentation(self, index: Any = None, name: str | None = None) -> dict[str, Any]:
+        """Pins an open presentation as the one every later action works on - no window juggling, unlike open_presentation."""
+        app = self.app
+        count = int(app.Presentations.Count)
+        if count == 0:
+            raise DocumentNotFoundError(
+                "No presentation open - use ppt_create_presentation or ppt_open_presentation"
+            )
+        if (index is None) == (name is None):
+            raise InvalidReferenceError(
+                "Pass exactly one of 'index' (from ppt_list_presentations) or 'name'"
+            )
+
+        if index is not None:
+            found_index = self.require_index(index, count, "index")
+            presentation = app.Presentations(found_index)
+        else:
+            wanted = os.path.normcase(str(name))
+            found_index = None
+            presentation = None
+            for candidate_index in range(1, count + 1):
+                candidate = app.Presentations(candidate_index)
+                try:
+                    if wanted in (self._presentation_key(candidate), os.path.normcase(str(candidate.Name))):
+                        found_index = candidate_index
+                        presentation = candidate
+                        break
+                except com_error:
+                    continue
+            if presentation is None:
+                raise InvalidReferenceError(
+                    f"No open presentation matches name={name!r} - see ppt_list_presentations"
+                )
+
+        self._remember(presentation)
+        return {
+            **self._presentation_summary(presentation),
+            "index": found_index,
         }
 
     @action("save")
