@@ -17,6 +17,8 @@ Slide indexes start at 1.
 |---|---|
 | `ppt_create_presentation(path, template=None)` | New presentation, optionally from a `.potx` |
 | `ppt_open_presentation(path)` | Open a file, or activate one already open |
+| `ppt_list_presentations()` | Every open presentation, current target marked |
+| `ppt_activate_presentation(index=None, name=None)` | Switch which open presentation the tools edit |
 | `ppt_save(path=None)` | Save, or save as a new file |
 | `ppt_close(save=True)` | Close the presentation |
 | `ppt_get_presentation_info()` | Slide count, slide size, theme, path |

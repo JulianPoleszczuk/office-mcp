@@ -264,6 +264,20 @@ def ppt_open_presentation(path: str) -> dict[str, Any]:
 
 
 @server.tool()
+def ppt_list_presentations() -> dict[str, Any]:
+    """Lists every open presentation - name, path, slide count, saved state - and marks the one the other ppt_* tools work on (is_target)."""
+    return call_bridge("powerpoint", "list_presentations")
+
+
+@server.tool()
+def ppt_activate_presentation(index: int | None = None, name: str | None = None) -> dict[str, Any]:
+    """Makes an open presentation the one all other ppt_* tools work on. Pass exactly one of 'index' (from ppt_list_presentations) or 'name' (file name or full path). Opens nothing and does not steal window focus."""
+    return call_bridge(
+        "powerpoint", "activate_presentation", {"index": index, "name": name}
+    )
+
+
+@server.tool()
 def ppt_save(path: str | None = None) -> dict[str, Any]:
     """Saves the current presentation; with 'path' saves it as a new file."""
     return call_bridge("powerpoint", "save", {"path": path})
