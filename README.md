@@ -26,7 +26,7 @@ an image, checks whether the layout came out right, and fixes it. That one
 feature is the difference between a deck that looks designed and one that looks
 generated.
 
-129 tools in total. The full list is in the [tool reference](docs/TOOLS.md).
+132 tools in total. The full list is in the [tool reference](docs/TOOLS.md).
 
 ## Install
 
@@ -75,7 +75,7 @@ to make a presentation and it will open PowerPoint for you.
 
 | Page | What is in it |
 |---|---|
-| [Tool reference](docs/TOOLS.md) | All 129 tools, grouped by what you want to do |
+| [Tool reference](docs/TOOLS.md) | All 132 tools, grouped by what you want to do |
 | [Recipes](docs/RECIPES.md) | Preview loops, styling a deck once, writing a thesis |
 | [How it works](docs/ARCHITECTURE.md) | Architecture, protocol, settings, tests, layout |
 | [Errors and gotchas](docs/GOTCHAS.md) | Error types, and Office behaviour worth knowing |
